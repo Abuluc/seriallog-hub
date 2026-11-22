@@ -1,0 +1,143 @@
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@(ViewData["Title"] != null ? $"{ViewData["Title"]} — SerialLog Hub" : "SerialLog Hub")</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.css" />
+    <link rel="stylesheet" href="~/css/serialloghub.css" asp-append-version="true" />
+</head>
+<body>
+    <div class="slh-shell">
+        <!-- Sidebar -->
+        <aside class="slh-sidebar">
+            <div class="slh-brand">
+                <a href="/Home" class="slh-brand-link">
+                    <span class="slh-brand-icon"><i class="fa-solid fa-wave-square"></i></span>
+                    <div>
+                        <div class="slh-brand-name">SerialLog Hub</div>
+                        <div class="slh-brand-sub">DataLogger Platform</div>
+                    </div>
+                </a>
+            </div>
+
+            <nav class="slh-nav">
+                <div class="slh-nav-section">Workspace</div>
+                <a href="/Home" class="slh-nav-item @(ViewContext.RouteData.Values["controller"]?.ToString() == "Home" && ViewContext.RouteData.Values["action"]?.ToString() == "Index" ? "active" : "")">
+                    <i class="fa-solid fa-gauge-high"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="/Home/CrateTable" class="slh-nav-item @(ViewContext.RouteData.Values["action"]?.ToString() == "CrateTable" ? "active" : "")">
+                    <i class="fa-solid fa-table"></i>
+                    <span>CSV / Excel Export</span>
+                </a>
+
+                <div class="slh-nav-section">Device Configuration</div>
+                <a href="/Settings/AddComm" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "AddComm" ? "active" : "")">
+                    <i class="fa-solid fa-comment-dots"></i>
+                    <span>Device Description</span>
+                </a>
+                <a href="/Settings/DelayStart" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "DelayStart" ? "active" : "")">
+                    <i class="fa-solid fa-hourglass-start"></i>
+                    <span>Delayed Start</span>
+                </a>
+                <a href="/Settings/Calibration" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "Calibration" ? "active" : "")">
+                    <i class="fa-solid fa-clock"></i>
+                    <span>Clock Calibration</span>
+                </a>
+                <a href="/Settings/Formatting" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "Formatting" ? "active" : "")">
+                    <i class="fa-solid fa-eraser"></i>
+                    <span>Format Memory</span>
+                </a>
+                <a href="/Settings/TempHum" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "TempHum" ? "active" : "")">
+                    <i class="fa-solid fa-temperature-half"></i>
+                    <span>Alarm Thresholds</span>
+                </a>
+                <a href="/Settings/Time" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "Time" ? "active" : "")">
+                    <i class="fa-solid fa-stopwatch"></i>
+                    <span>Logging Interval</span>
+                </a>
+
+                <div class="slh-nav-section">Account</div>
+                <a href="/UserSettings/Index" class="slh-nav-item @(ViewContext.RouteData.Values["controller"]?.ToString() == "UserSettings" ? "active" : "")">
+                    <i class="fa-solid fa-user-gear"></i>
+                    <span>Account Settings</span>
+                </a>
+            </nav>
+
+            <div class="slh-sidebar-footer">
+                <div class="slh-status-pill" id="bridgeStatusPill" title="Desktop COM Port Bridge heartbeat via SignalR">
+                    <span class="slh-dot offline" id="bridgeStatusDot"></span>
+                    <span id="bridgeStatusText">Bridge Offline</span>
+                </div>
+                <div class="slh-battery-box">
+                    <div class="slh-battery-meta">
+                        <span><i class="fa-solid fa-battery-three-quarters"></i> Device Battery</span>
+                        <strong id="batteryPercentageText">--%</strong>
+                    </div>
+                    <div class="slh-battery-track">
+                        <div class="slh-battery-fill" id="batteryLevelBar" style="width: 0%;"></div>
+                    </div>
+                </div>
+                <div class="slh-clock-box">
+                    <span id="slhClock">--:--:--</span>
+                    <span id="slhDate">--/--/----</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Column -->
+        <div class="slh-main">
+            <header class="slh-topbar">
+                <div class="slh-topbar-left" style="display:flex;align-items:center;gap:12px;">
+                    <h1 class="slh-page-title">@(ViewData["Title"] ?? "Dashboard")</h1>
+                    @if (Configuration.GetValue<bool>("DemoMode:Enabled"))
+                    {
+                        <span class="slh-badge slh-badge-demo" title="Running with synthetic sample data and optional Virtual DataLogger simulator">
+                            <i class="fa-solid fa-flask"></i> Simulation / Demo Mode
+                        </span>
+                    }
+                </div>
+                <div class="slh-topbar-right">
+                    <div class="slh-user-chip">
+                        <i class="fa-solid fa-circle-user"></i>
+                        <span id="currentUserName">@(User.Identity?.Name ?? "Guest")</span>
+                    </div>
+                    <button type="button" id="logoutBtn" class="slh-btn slh-btn-ghost slh-btn-sm">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                        <span>Sign Out</span>
+                    </button>
+                </div>
+            </header>
+
+            <main class="slh-content">
+                @RenderBody()
+            </main>
+        </div>
+    </div>
+
+    <!-- Global Loading Overlay -->
+    <div id="loadingOverlay" class="slh-loading-overlay" style="display: none;">
+        <div class="slh-loading-card">
+            <div class="slh-spinner"></div>
+            <p id="loadingOverlayText">Reading data from DataLogger...</p>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="~/js/app.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

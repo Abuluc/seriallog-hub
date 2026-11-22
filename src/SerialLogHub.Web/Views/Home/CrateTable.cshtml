@@ -1,0 +1,107 @@
+@{
+    ViewData["Title"] = "CSV Table & Excel Export";
+}
+
+<div class="slh-card">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-file-excel"></i>
+            <span>CSV Table Viewer &amp; Excel Export</span>
+        </div>
+        <div class="slh-toolbar">
+            <label for="fileUploader" class="slh-btn slh-btn-primary slh-btn-sm">
+                <i class="fa-solid fa-upload"></i> Select CSV File
+                <input type="file" id="fileUploader" accept=".csv" style="display: none;" />
+            </label>
+            <span id="selectedFileName" style="font-size: 0.82rem; color: #64748b;">No file selected</span>
+            <input type="text" id="exportFileName" class="slh-input" style="width: 200px;" placeholder="export.xlsx" />
+            <button type="button" id="exportBtn" class="slh-btn slh-btn-success slh-btn-sm">
+                <i class="fa-solid fa-download"></i> Export .xlsx
+            </button>
+        </div>
+    </div>
+
+    <div class="slh-table-wrap">
+        <table class="slh-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Temperature (°C)</th>
+                    <th>Humidity (%)</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody id="exportTableBody">
+                <tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">Upload a CSV file to preview and export to Excel.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        let parsedRows = [];
+
+        function parseCsvRows(csv) {
+            const lines = csv.split(/\r?\n/);
+            const out = [];
+            let id = 1;
+            for (let i = 1; i < lines.length; i++) {
+                const row = lines[i].split(",");
+                if (row.length >= 10) {
+                    const temp = parseFloat(row[2]);
+                    const hum = parseFloat(row[3]);
+                    if (isNaN(temp) || isNaN(hum)) continue;
+                    out.push([id++, temp, hum, `${row[4]}-${row[5]}-${row[6]}`, `${row[7]}:${row[8]}:${row[9]}`]);
+                }
+            }
+            return out;
+        }
+
+        function renderPreview(rows) {
+            const tbody = document.getElementById("exportTableBody");
+            tbody.innerHTML = "";
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px;">No valid rows found.</td></tr>';
+                return;
+            }
+            rows.forEach(r => {
+                const tr = document.createElement("tr");
+                r.forEach(c => {
+                    const td = document.createElement("td");
+                    td.textContent = c;
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+        }
+
+        document.getElementById("fileUploader").addEventListener("change", function () {
+            if (!this.files.length) return;
+            const file = this.files[0];
+            document.getElementById("selectedFileName").textContent = file.name;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                parsedRows = parseCsvRows(e.target.result);
+                renderPreview(parsedRows);
+                toastr.success(`Loaded ${parsedRows.length} rows.`);
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById("exportBtn").addEventListener("click", async function () {
+            if (!parsedRows.length) { toastr.warning("Load a CSV file first."); return; }
+            let name = document.getElementById("exportFileName").value.trim() || "serialloghub_export.xlsx";
+            if (!name.endsWith(".xlsx")) name += ".xlsx";
+
+            const wb = new ExcelJS.Workbook();
+            const ws = wb.addWorksheet("DataLogger");
+            ws.addRow(["ID", "Temperature (°C)", "Humidity (%)", "Date", "Time"]);
+            parsedRows.forEach(r => ws.addRow(r));
+            const buffer = await wb.xlsx.writeBuffer();
+            saveAs(new Blob([buffer], { type: "application/octet-stream" }), name);
+            toastr.success(`Downloaded ${name}`);
+        });
+    </script>
+}

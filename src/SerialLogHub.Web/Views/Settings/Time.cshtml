@@ -1,0 +1,70 @@
+@{
+    ViewData["Title"] = "Logging Interval & Start";
+}
+
+<div class="slh-card" style="max-width: 720px;">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-stopwatch"></i>
+            <span>Sampling Interval &amp; Auto-Start</span>
+        </div>
+        <span class="slh-badge slh-badge-demo">Step 6 / 6</span>
+    </div>
+
+    <div class="slh-form-row" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="slh-form-group">
+            <label for="hours">Hours (0–23)</label>
+            <input type="number" id="hours" class="slh-input" value="0" min="0" max="23" />
+        </div>
+        <div class="slh-form-group">
+            <label for="minutes">Minutes (0–59)</label>
+            <input type="number" id="minutes" class="slh-input" value="0" min="0" max="59" />
+        </div>
+        <div class="slh-form-group">
+            <label for="seconds">Seconds (min 10)</label>
+            <input type="number" id="seconds" class="slh-input" value="20" min="0" max="59" />
+        </div>
+    </div>
+
+    <div class="slh-wizard-footer">
+        <a href="/Settings/TempHum" class="slh-btn slh-btn-outline">&lt;- Previous</a>
+        <div class="slh-toolbar">
+            <button type="button" id="setIntervalBtn" class="slh-btn slh-btn-primary">Set Interval (WLA)</button>
+            <button type="button" id="autoStartBtn" class="slh-btn slh-btn-success">Enable Auto-Start (WLV1)</button>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        document.getElementById("setIntervalBtn").addEventListener("click", function () {
+            const conn = window.SerialLogHub.getConnectionCookie();
+            if (!conn) { toastr.warning("Connect to a device first."); return; }
+            const h = parseInt(document.getElementById("hours").value, 10) || 0;
+            const m = parseInt(document.getElementById("minutes").value, 10) || 0;
+            const s = parseInt(document.getElementById("seconds").value, 10) || 0;
+            const total = h * 3600 + m * 60 + s;
+            if (total < 10) { toastr.error("Total interval must be at least 10 seconds."); return; }
+
+            $.post("/Settings/SetTime", {
+                model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud },
+                Time: total
+            }).done(res => {
+                if (res.status === "success") toastr.success(`Interval set to ${total}s.`);
+                else toastr.warning(res.message || "Timed out.");
+            }).fail(() => toastr.error("Failed to set interval."));
+        });
+
+        document.getElementById("autoStartBtn").addEventListener("click", function () {
+            const conn = window.SerialLogHub.getConnectionCookie();
+            if (!conn) { toastr.warning("Connect to a device first."); return; }
+
+            $.post("/Settings/AutoStart", {
+                model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
+            }).done(res => {
+                if (res.status === "success") toastr.success("Auto-start enabled.");
+                else toastr.warning(res.message || "Timed out.");
+            }).fail(() => toastr.error("Auto-start failed."));
+        });
+    </script>
+}

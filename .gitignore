@@ -1,0 +1,40 @@
+# .NET build artifacts
+bin/
+obj/
+publish/
+*.user
+*.suo
+*.cache
+*.nupkg
+*.snupkg
+
+# IDE & OS
+.vs/
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Local databases & secrets
+*.db
+*.db-shm
+*.db-wal
+*.mdf
+*.ldf
+*.pfx
+*.cer
+*.key
+*.pem
+.env
+.env.local
+appsettings.Production.json
+
+# Large binary archives
+*.zip
+*.exe
+*.deploy
+
+# Legacy reference folders (kept locally until explicitly archived/removed)
+WebPortApp-main/
+WhiloggerU--master/
+WhiloggerWEB-master/

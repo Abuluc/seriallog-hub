@@ -1,0 +1,46 @@
+services:
+  serialloghub-api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.api
+    container_name: serialloghub-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Data Source=/data/serialloghub.db"
+      ApiSecurity__ApiKey: "${SERIALLOGHUB_API_KEY:-change-me-api-key}"
+      ApiSecurity__RequireApiKey: "true"
+      DemoMode__Enabled: "${SERIALLOGHUB_DEMO_MODE:-true}"
+      DemoMode__CloudVirtualDeviceResponder: "${SERIALLOGHUB_CLOUD_VIRTUAL_DEVICE:-true}"
+      DemoMode__ResetIntervalMinutes: "60"
+      DemoMode__DemoEmail: "${SERIALLOGHUB_DEMO_EMAIL:-demo@serialloghub.example}"
+      DemoMode__DemoUsername: "${SERIALLOGHUB_DEMO_USERNAME:-demo_operator}"
+      DemoMode__DemoPassword: "${SERIALLOGHUB_DEMO_PASSWORD:-ChangeMeDemo123!}"
+      Cors__AllowedOrigins__0: "${SERIALLOGHUB_PUBLIC_WEB_URL:-http://localhost:3000}"
+    volumes:
+      - serialloghub_data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  serialloghub-web:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.web
+    container_name: serialloghub-web
+    depends_on:
+      - serialloghub-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ApiSettings__BaseUrl: "http://serialloghub-api:8080/api/"
+      ApiSettings__ApiKey: "${SERIALLOGHUB_API_KEY:-change-me-api-key}"
+      BridgeSecurity__BridgeKey: "${SERIALLOGHUB_BRIDGE_KEY:-change-me-bridge-key}"
+      BridgeSecurity__RequireBridgeKey: "true"
+      DemoMode__Enabled: "${SERIALLOGHUB_DEMO_MODE:-true}"
+      DemoMode__DemoEmail: "${SERIALLOGHUB_DEMO_EMAIL:-demo@serialloghub.example}"
+      DemoMode__DemoUsername: "${SERIALLOGHUB_DEMO_USERNAME:-demo_operator}"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  serialloghub_data:

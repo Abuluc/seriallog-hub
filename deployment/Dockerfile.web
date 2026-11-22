@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+COPY src/SerialLogHub.Web/SerialLogHub.Web.csproj src/SerialLogHub.Web/
+RUN dotnet restore src/SerialLogHub.Web/SerialLogHub.Web.csproj
+
+COPY src/SerialLogHub.Web/ src/SerialLogHub.Web/
+RUN dotnet publish src/SerialLogHub.Web/SerialLogHub.Web.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+
+ENV ASPNETCORE_URLS=http://+:3000
+
+COPY --from=build /app/publish .
+EXPOSE 3000
+
+ENTRYPOINT ["dotnet", "SerialLogHub.Web.dll"]

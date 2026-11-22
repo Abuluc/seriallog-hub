@@ -1,0 +1,77 @@
+@{
+    ViewData["Title"] = "Account Settings";
+}
+
+<div class="slh-card" style="max-width: 600px;">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-user-gear"></i>
+            <span>Account Settings</span>
+        </div>
+    </div>
+
+    <div class="slh-form-group">
+        <label>Email Address (Read-Only)</label>
+        <input type="email" id="profileEmail" class="slh-input" value="@(User.Identity?.Name ?? "")" disabled />
+    </div>
+
+    <div class="slh-form-group">
+        <label for="profileUsername">Username</label>
+        <input type="text" id="profileUsername" class="slh-input" placeholder="Loading..." />
+    </div>
+
+    <div class="slh-form-group">
+        <label for="currentPassword">Current Password (Required to update username)</label>
+        <input type="password" id="currentPassword" class="slh-input" placeholder="Enter current password" />
+    </div>
+
+    <div class="slh-toolbar" style="justify-content: space-between; margin-top: 18px;">
+        <button type="button" id="saveUsernameBtn" class="slh-btn slh-btn-primary">Update Username</button>
+        <button type="button" id="resetPassBtn" class="slh-btn slh-btn-outline">Send Password Reset Link</button>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            $.post("/GetUserName").done(data => {
+                if (data.username) document.getElementById("profileUsername").value = data.username;
+                if (data.email) document.getElementById("profileEmail").value = data.email;
+            });
+        });
+
+        document.getElementById("saveUsernameBtn").addEventListener("click", function () {
+            const newValue = document.getElementById("profileUsername").value.trim();
+            const currentPassword = document.getElementById("currentPassword").value.trim();
+            if (!newValue || !currentPassword) { toastr.warning("Username and current password are required."); return; }
+
+            $.ajax({
+                url: "/updatename",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify({ newValue, currentPassword }),
+                success: function (res) {
+                    toastr.success(res.message || "Username updated.");
+                    document.getElementById("currentPassword").value = "";
+                    const el = document.getElementById("currentUserName");
+                    if (el) el.textContent = newValue;
+                },
+                error: function (xhr) {
+                    toastr.error(xhr.responseJSON?.message || "Update failed.");
+                }
+            });
+        });
+
+        document.getElementById("resetPassBtn").addEventListener("click", function () {
+            const email = document.getElementById("profileEmail").value;
+            $.ajax({
+                url: "/api/auth/reset-password",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify({ Email: email }),
+                success: function (res) { toastr.success(res.message || "Reset email sent."); },
+                error: function () { toastr.error("Failed to send reset link."); }
+            });
+        });
+    </script>
+}

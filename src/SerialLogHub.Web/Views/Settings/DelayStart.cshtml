@@ -1,0 +1,47 @@
+@{
+    ViewData["Title"] = "Delayed Start";
+}
+
+<div class="slh-card" style="max-width: 720px;">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-hourglass-start"></i>
+            <span>Delayed Logging Start</span>
+        </div>
+        <span class="slh-badge slh-badge-demo">Step 2 / 6</span>
+    </div>
+
+    <div class="slh-form-group">
+        <label for="startDelayTextBox">Scheduled Start Time (Command: <code>WLS0,YY-MM-DD,HH:MM:00</code>)</label>
+        <input type="time" id="startDelayTextBox" class="slh-input" />
+    </div>
+
+    <div class="slh-wizard-footer">
+        <a href="/Settings/AddComm" class="slh-btn slh-btn-outline">&lt;- Previous</a>
+        <div class="slh-toolbar">
+            <button type="button" id="delayStartBtn" class="slh-btn slh-btn-primary">Save Schedule</button>
+            <a href="/Settings/Calibration" class="slh-btn slh-btn-outline">Next -&gt;</a>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        document.getElementById("delayStartBtn").addEventListener("click", function () {
+            const conn = window.SerialLogHub.getConnectionCookie();
+            const startTime = document.getElementById("startDelayTextBox").value;
+            if (!conn || !startTime) { toastr.warning("Connect to a device and select a start time."); return; }
+
+            const today = new Date().toISOString().slice(2, 10);
+            const formatted = `${today},${startTime}:00`;
+
+            $.post("/Settings/SetDelayStart", {
+                Time: formatted,
+                model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
+            }).done(res => {
+                if (res.status === "success") toastr.success("Delayed start saved.");
+                else toastr.warning(res.message || "Timed out.");
+            }).fail(() => toastr.error("Failed to configure delayed start."));
+        });
+    </script>
+}

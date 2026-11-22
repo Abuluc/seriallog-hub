@@ -1,0 +1,14 @@
+@model SerialLogHub.Web.Models.ErrorViewModel
+@{
+    ViewData["Title"] = "Error";
+}
+
+<div class="slh-card">
+    <h2 class="slh-card-title text-danger">An error occurred</h2>
+    <p>An unexpected error occurred while processing your request.</p>
+    @if (Model?.ShowRequestId == true)
+    {
+        <p class="text-muted"><strong>Request ID:</strong> <code>@Model.RequestId</code></p>
+    }
+    <a href="/Home" class="slh-btn slh-btn-primary">Return to Dashboard</a>
+</div>

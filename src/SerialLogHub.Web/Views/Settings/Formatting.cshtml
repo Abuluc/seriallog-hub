@@ -1,0 +1,43 @@
+@{
+    ViewData["Title"] = "Format Device Memory";
+}
+
+<div class="slh-card" style="max-width: 720px;">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-eraser"></i>
+            <span>Format Flash Memory</span>
+        </div>
+        <span class="slh-badge slh-badge-demo">Step 4 / 6</span>
+    </div>
+
+    <p style="color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 12px 14px; border-radius: 8px; font-size: 0.88rem; margin-bottom: 16px;">
+        <strong>Warning:</strong> Sending <code>WLE1</code> permanently erases all stored measurements on the connected DataLogger flash memory.
+    </p>
+
+    <div class="slh-wizard-footer">
+        <a href="/Settings/Calibration" class="slh-btn slh-btn-outline">&lt;- Previous</a>
+        <div class="slh-toolbar">
+            <button type="button" id="formatBtn" class="slh-btn slh-btn-danger">Format Device (WLE1)</button>
+            <a href="/Settings/TempHum" class="slh-btn slh-btn-outline">Next -&gt;</a>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        document.getElementById("formatBtn").addEventListener("click", function () {
+            const conn = window.SerialLogHub.getConnectionCookie();
+            if (!conn) { toastr.warning("Connect to a device first."); return; }
+            if (!confirm("Erase all stored logs on the DataLogger?")) return;
+
+            $.get("/Settings/Format", {
+                SelectedPort: conn.currentPort,
+                SelectedBaudRate: conn.currentBaud
+            }).done(res => {
+                if (res.status === "success") toastr.success("Device memory formatted.");
+                else toastr.warning(res.message || "Timed out.");
+            }).fail(() => toastr.error("Format failed."));
+        });
+    </script>
+}

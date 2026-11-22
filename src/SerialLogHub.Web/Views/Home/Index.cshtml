@@ -1,0 +1,225 @@
+@model SerialLogHub.Web.Models.SerialPortModel
+@{
+    ViewData["Title"] = "Telemetry Dashboard";
+}
+
+<!-- KPI Row -->
+<section class="slh-kpi-grid">
+    <div class="slh-kpi-card">
+        <div class="slh-kpi-icon blue"><i class="fa-solid fa-plug"></i></div>
+        <div>
+            <div class="slh-kpi-label">COM Bridge Status</div>
+            <div class="slh-kpi-value" id="kpiBridgeStatus">Offline</div>
+        </div>
+    </div>
+    <div class="slh-kpi-card">
+        <div class="slh-kpi-icon green"><i class="fa-solid fa-microchip"></i></div>
+        <div>
+            <div class="slh-kpi-label">Active Device Port</div>
+            <div class="slh-kpi-value" id="kpiActivePort">Not Connected</div>
+        </div>
+    </div>
+    <div class="slh-kpi-card">
+        <div class="slh-kpi-icon amber"><i class="fa-solid fa-database"></i></div>
+        <div>
+            <div class="slh-kpi-label">Loaded Readings</div>
+            <div class="slh-kpi-value" id="kpiTotalRows">0</div>
+        </div>
+    </div>
+    <div class="slh-kpi-card">
+        <div class="slh-kpi-icon red"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <div>
+            <div class="slh-kpi-label">Detected Anomalies</div>
+            <div class="slh-kpi-value" id="kpiAnomalyCount">0</div>
+        </div>
+    </div>
+</section>
+
+<!-- Telemetry Chart Card -->
+<section class="slh-card">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-chart-line text-primary"></i>
+            <span>Temperature &amp; Humidity Telemetry</span>
+            <span id="datasetSourceBadge" class="slh-badge slh-badge-demo" style="display: none;">Sample Demo Data</span>
+        </div>
+        <div class="slh-toolbar">
+            <label for="fileInput" class="slh-btn slh-btn-outline slh-btn-sm">
+                <i class="fa-solid fa-file-csv"></i> Select CSV
+                <input type="file" id="fileInput" accept=".csv" style="display: none;" />
+            </label>
+            <span id="fileNameDisplay" style="font-size: 0.8rem; color: #64748b;"></span>
+            <button type="button" id="loadCsvBtn" class="slh-btn slh-btn-primary slh-btn-sm">
+                <i class="fa-solid fa-play"></i> Load Graph
+            </button>
+            @if (Model.DemoModeEnabled)
+            {
+                <button type="button" id="loadDemoCsvBtn" class="slh-btn slh-btn-success slh-btn-sm">
+                    <i class="fa-solid fa-flask"></i> Load Sample Demo Data
+                </button>
+            }
+            <button type="button" id="exportExcelBtn" class="slh-btn slh-btn-outline slh-btn-sm">
+                <i class="fa-solid fa-file-excel"></i> Export .xlsx
+            </button>
+            <button type="button" id="resetGraphBtn" class="slh-btn slh-btn-danger slh-btn-sm">
+                <i class="fa-solid fa-trash"></i> Clear
+            </button>
+        </div>
+    </div>
+
+    <div class="slh-graph-wrap">
+        <div id="graphContainer" style="height: 340px; width: 100%;">
+            <div style="height: 100%; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 0.9rem;">
+                Upload a CSV file, connect a DataLogger device, or click "Load Sample Demo Data" to inspect temperature &amp; humidity telemetry.
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Main Split: Data Table + Serial Port Control -->
+<section class="slh-grid-main">
+    <!-- Measurements Table -->
+    <div class="slh-card">
+        <div class="slh-card-header">
+            <div class="slh-tabs">
+                <button type="button" id="btnAllData" class="slh-tab-btn active">All Readings</button>
+                <button type="button" id="btnFaultyData" class="slh-tab-btn">Anomalies Only</button>
+            </div>
+            <div class="slh-toolbar">
+                <input type="text" id="indexSearch" class="slh-input" style="width: 170px;" placeholder="Search by ID..." />
+                <label style="font-size: 0.8rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                    <input type="checkbox" id="toggleTimeRange" /> Time Filter
+                </label>
+            </div>
+        </div>
+
+        <div id="timeRangeContainer" style="display: none; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; padding: 12px; background: #f8fafc; border-radius: 8px;">
+            <div>
+                <label for="startDateTime" style="font-size: 0.75rem; font-weight: 600; display: block;">Start</label>
+                <input type="datetime-local" id="startDateTime" class="slh-input" />
+            </div>
+            <div>
+                <label for="endDateTime" style="font-size: 0.75rem; font-weight: 600; display: block;">End</label>
+                <input type="datetime-local" id="endDateTime" class="slh-input" />
+            </div>
+            <button type="button" id="timeFilterBtn" class="slh-btn slh-btn-primary slh-btn-sm">Apply Filter</button>
+        </div>
+
+        <div class="slh-table-wrap">
+            <table class="slh-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Temperature (°C)</th>
+                        <th>Humidity (%)</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="datatbody">
+                    <tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 24px;">No measurements loaded yet.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="slh-pagination">
+            <button type="button" id="prevPage" class="slh-btn slh-btn-outline slh-btn-sm">&lt; Prev</button>
+            <span id="pageInfo">Page 0 / 0</span>
+            <button type="button" id="nextPage" class="slh-btn slh-btn-outline slh-btn-sm">Next &gt;</button>
+        </div>
+    </div>
+
+    <!-- Serial Port Panel -->
+    <div class="slh-card" id="SerialComm">
+        <div class="slh-card-header">
+            <div class="slh-card-title">
+                <i class="fa-solid fa-terminal"></i>
+                <span>Serial Port Connection</span>
+            </div>
+            <button type="button" id="refreshPortsBtn" class="slh-btn slh-btn-ghost slh-btn-sm" title="Refresh COM ports">
+                <i class="fa-solid fa-rotate"></i>
+            </button>
+        </div>
+
+        <form id="serialPortForm">
+            <div class="slh-form-row">
+                <div class="slh-form-group">
+                    <label for="selectedPort">COM Port</label>
+                    <select id="selectedPort" name="SelectedPort" class="slh-select" required>
+                        @foreach (var port in Model.AvailablePorts)
+                        {
+                            <option value="@port">@port</option>
+                        }
+                    </select>
+                </div>
+                <div class="slh-form-group">
+                    <label for="selectedBaudRate">Baud Rate</label>
+                    <select id="selectedBaudRate" name="SelectedBaudRate" class="slh-select" required>
+                        @foreach (var rate in Model.BaudRates)
+                        {
+                            <option value="@rate">@rate</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="slh-toolbar" style="margin-bottom: 14px;">
+                <button type="button" id="connectBtn" class="slh-btn slh-btn-success slh-btn-block">
+                    <i class="fa-solid fa-link"></i> Connect
+                </button>
+                <button type="button" id="disconnectBtn" class="slh-btn slh-btn-danger slh-btn-block" style="display: none;">
+                    <i class="fa-solid fa-link-slash"></i> Disconnect
+                </button>
+            </div>
+
+            <div class="slh-form-group">
+                <label for="messageToSend">Serial Command (e.g. <code>WLB</code>, <code>WLJ</code>, <code>WLH0</code>)</label>
+                <input type="text" id="messageToSend" name="MessageToSend" class="slh-input" placeholder="Enter device command..." disabled />
+            </div>
+
+            <div class="slh-form-row">
+                <button type="submit" id="sendButton" class="slh-btn slh-btn-primary" style="display: none;">
+                    <i class="fa-solid fa-paper-plane"></i> Send Command
+                </button>
+                <button type="button" id="quickReadWlbBtn" class="slh-btn slh-btn-outline" style="display: none;">
+                    <i class="fa-solid fa-download"></i> Read Logs (WLB)
+                </button>
+            </div>
+        </form>
+
+        <div class="slh-terminal-log" id="serialTerminalLog">Ready. Select a COM port and click Connect.</div>
+    </div>
+</section>
+
+<!-- Previous Uploads (IndexedDB) -->
+<section class="slh-card">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <span>Previous Datasets (Local IndexedDB History)</span>
+        </div>
+    </div>
+    <div class="slh-table-wrap" style="max-height: 260px;">
+        <table class="slh-table" id="csvTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>File Name</th>
+                    <th>Records</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Source</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="csvTablebody">
+                <tr><td colspan="7" style="text-align: center; color: #94a3b8; padding: 18px;">No saved datasets in browser history yet.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@section Scripts {
+    <script src="~/js/dashboard.js" asp-append-version="true"></script>
+}

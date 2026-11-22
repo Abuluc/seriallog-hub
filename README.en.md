@@ -1,0 +1,219 @@
+# SerialLog Hub — Technical Documentation (English)
+
+> **[Türkçe Dokümantasyon (`README.tr.md`)](README.tr.md)** | **[Main Page (`README.md`)](README.md)**
+
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-8.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
+[![EF Core SQLite](https://img.shields.io/badge/EF%20Core-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
+[![xUnit](https://img.shields.io/badge/Tests-xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
+[![Docker](https://img.shields.io/badge/Deployment-Docker%20%2B%20Render-2496ED?logo=docker&logoColor=white)](deployment/docker-compose.yml)
+
+## Table of Contents
+
+1. [Project Overview](#1-project-overview)
+2. [Key Features](#2-key-features)
+3. [Architecture](#3-architecture)
+4. [Technologies](#4-technologies)
+5. [Application Components](#5-application-components)
+6. [Screenshots](#6-screenshots)
+7. [Live Demo](#7-live-demo)
+8. [Demo Account](#8-demo-account)
+9. [Installation](#9-installation)
+10. [Configuration](#10-configuration)
+11. [API Documentation](#11-api-documentation)
+12. [Database Structure](#12-database-structure)
+13. [Testing](#13-testing)
+14. [Security](#14-security)
+15. [Known Limitations](#15-known-limitations)
+16. [Roadmap](#16-roadmap)
+17. [License](#17-license)
+
+---
+
+## 1. Project Overview
+
+**SerialLog Hub** is a three-tier DataLogger management platform built with **.NET 8** for configuring USB/RS-232 serial temperature & humidity DataLogger devices, bridging local Windows COM ports to a web workspace, detecting measurement anomalies, and visualizing high-density time-series telemetry.
+
+Originally started as an internship prototype, the system was audited, security-hardened, and re-engineered into a modular, testable architecture with an isolated **Virtual DataLogger Simulator** so developers can evaluate the entire workflow without physical hardware.
+
+---
+
+## 2. Key Features
+
+- **Real-Time Telemetry Graphing:** Interactive **uPlot** dual-series Temperature (°C) and Humidity (%) chart with hover tooltips.
+- **Automated Anomaly Detection:** Flags sudden rate-of-change spikes and out-of-range temperature/humidity readings with dedicated **Anomalies Only** filtering.
+- **6-Step Device Configuration Wizard:** Device Description (`WLG`/`WLW`), Delayed Start (`WLS0`), RTC Clock Calibration (`WLH0`/`WLH1`), Flash Memory Format (`WLE1`), Alarm Thresholds (`WLM`), and Sampling Interval / Auto-Start (`WLA`/`WLV1`).
+- **COM Port Bridge with WMI Discovery:** Enumerates physical Windows COM ports with friendly hardware names (`Win32_SerialPort`) and streams `WLB` logs over SignalR.
+- **Browser IndexedDB History & Excel Export:** Persists uploaded CSV datasets and device dumps locally in IndexedDB and exports filtered tables to `.xlsx` via ExcelJS.
+- **Isolated Demo & Simulation Mode:** Supports both local Desktop Virtual COM Port (`COM99`) and optional Cloud Demo Responder for zero-hardware evaluation.
+
+---
+
+## 3. Architecture
+
+```mermaid
+flowchart LR
+    Browser["Web Browser\n(uPlot, IndexedDB, ExcelJS, SignalR)"]
+    Web["SerialLogHub.Web\n(ASP.NET Core 8 MVC + SignalR)\nPort 3000"]
+    API["SerialLogHub.Api\n(ASP.NET Core 8 Web API)\nPort 8080"]
+    DB[("SQLite\nUsers, UsersPort, Commands,\nCommandHistories, ApiKeys")]
+    Desktop["SerialLogHub.Desktop\n(.NET 8 Windows COM Bridge)"]
+    HW["DataLogger Device\n(Real COM / Virtual COM99)"]
+
+    Browser <-->|"HTTP + Cookie Auth + SignalR"| Web
+    Web <-->|"REST JSON + X-API-KEY"| API
+    API <-->|"EF Core 8"| DB
+    Desktop <-->|"REST JSON + X-API-KEY"| API
+    Desktop -->|"Webhooks + X-BRIDGE-KEY"| Web
+    Desktop <-->|"System.IO.Ports / Simulator"| HW
+```
+
+Detailed sequence diagrams are documented in [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
+
+---
+
+## 4. Technologies
+
+| Layer | Stack |
+| :--- | :--- |
+| **Backend API** | C#, .NET 8, ASP.NET Core Web API, EF Core 8, SQLite, Swagger/OpenAPI, Built-in Rate Limiter |
+| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, IndexedDB, ExcelJS, FileSaver.js, Toastr |
+| **Desktop COM Bridge** | .NET 8 Windows Forms (`net8.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
+| **Testing & DevOps** | xUnit, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
+
+---
+
+## 5. Application Components
+
+1. **`src/SerialLogHub.Api`**: Central REST API managing authentication, per-user COM port registries, asynchronous command queues, command history auditing, and optional `CloudDemoResponderService` (for cloud demo deployments).
+2. **`src/SerialLogHub.Web`**: Operator web portal with KPI cards, telemetry charts, anomaly filtering, IndexedDB dataset history, Excel export, and 6 device configuration screens.
+3. **`src/SerialLogHub.Desktop`**: Windows desktop bridge with `ISerialTransport` separating physical hardware (`RealSerialTransport`) from the optional virtual simulator (`SimulatedSerialTransport`).
+
+---
+
+## 6. Screenshots
+
+| Login Screen (with Demo Helper) | Telemetry Dashboard & uPlot Chart |
+| :---: | :---: |
+| ![Login Screen](docs/screenshots/01-login.png) | ![Telemetry Dashboard](docs/screenshots/02-dashboard-telemetry.png) |
+
+| Anomaly Table & Connected Serial Terminal | Device Description Configuration (`WLG`/`WLW`) |
+| :---: | :---: |
+| ![Anomalies and Serial Terminal](docs/screenshots/03-anomalies-and-serial.png) | ![Device Configuration](docs/screenshots/04-device-configuration.png) |
+
+| Alarm Threshold Configuration (`WLM`) |
+| :---: |
+| ![Alarm Thresholds](docs/screenshots/05-alarm-thresholds.png) |
+
+---
+
+## 7. Live Demo
+
+> **Deployment Status:** Containerized (`deployment/Dockerfile.api`, `deployment/Dockerfile.web`, `deployment/docker-compose.yml`, `deployment/render.yaml`) and verified locally in Cloud Simulation Mode. A public HTTPS Live Demo URL will be added here once deployed to the selected cloud host.
+
+See [docs/demo/DEMO_GUIDE.md](docs/demo/DEMO_GUIDE.md) for hosting options (Render, Fly.io, Railway, VPS) and one-command Docker deployment instructions.
+
+---
+
+## 8. Demo Account
+
+When running in **Demo / Simulation Mode**, the UI displays a clear **Simulation / Demo Mode** badge and interacts with a simulated DataLogger (`COM99 (Virtual DataLogger - Demo)`), not physical hardware:
+
+- **Demo Email (Configured via environment variable):** `demo@serialloghub.example` *(default local dev: `demo@serialloghub.local`)*
+- **Demo Username:** `demo_operator`
+- **Demo Password:** Configured via `DemoMode__DemoPassword` environment variable (never commit production passwords to source control).
+- **Safeguards:** Non-privileged account, username/account modification blocked, fixed-window IP rate limiting (180 req/min), and automatic 60-minute demo state reset in cloud mode.
+
+---
+
+## 9. Installation
+
+### Prerequisites
+- **.NET 8.0 SDK** (Windows 10/11 required for `SerialLogHub.Desktop`; API and Web are cross-platform)
+- Optional: **Docker & Docker Compose** for containerized deployment
+
+### Local Setup
+```powershell
+# 1. Clone and build all projects
+dotnet build SerialLogHub.sln
+
+# 2. Run unit tests
+dotnet test SerialLogHub.sln
+
+# 3. Start all 3 apps locally
+./scripts/run-local.ps1
+```
+
+### Docker Compose (Web + API Cloud Demo)
+```bash
+cp .env.example .env
+# Update secrets in .env before starting
+docker compose -f deployment/docker-compose.yml up --build
+```
+
+---
+
+## 10. Configuration
+
+Copy [.env.example](.env.example) and configure via environment variables or `appsettings.Development.json`:
+
+- `ConnectionStrings__DefaultConnection`: SQLite database path (e.g., `Data Source=serialloghub.db`).
+- `ApiSecurity__ApiKey`: Shared secret required in `X-API-KEY` header.
+- `BridgeSecurity__BridgeKey`: Shared secret required in `X-BRIDGE-KEY` header for Desktop-to-Web webhooks.
+- `DemoMode__Enabled` & `DemoMode__CloudVirtualDeviceResponder`: Controls Demo Mode seeding and cloud virtual device simulation.
+
+---
+
+## 11. API Documentation
+
+Interactive Swagger UI is available at `http://localhost:8080/swagger` in Development mode.  
+Full endpoint contracts and SignalR Hub documentation are in [docs/api/API_DOCUMENTATION.md](docs/api/API_DOCUMENTATION.md).
+
+---
+
+## 12. Database Structure
+
+`SerialLogHub.Api` uses **SQLite** via EF Core 8 with 5 tables:
+
+- **`Users`**: `Id`, `Username`, `Email` (unique), `HashedPassword` (salted PBKDF2), `IsEmailVerified`, `VerificationToken`, `ResetPasswordToken`, `TokenExpiryTime`
+- **`UsersPort`**: `Id`, `UserEmail` (unique), `Ports` (JSON array of detected COM ports)
+- **`Commands`**: `Id`, `Email`, `SelecetdPort`, `BaudRate`, `Message`, `Timestamp`, `CommandID`, `IsProcessed`, `Response`
+- **`CommandHistories`**: Permanent audit log of processed commands and device responses
+- **`ApiKeys`**: `Id`, `Key` (unique), `ExpiresAt`
+
+---
+
+## 13. Testing
+
+- **Automated Unit Tests (`dotnet test`):** 6/6 xUnit tests passing (`PasswordSecurityServiceTests`, `SerialTransportTests`).
+- **End-to-End 3-Tier Verification:** Verified `SerialLogHub.Api` + `SerialLogHub.Web` + `SerialLogHub.Desktop` (headless virtual device) across authentication, WMI + virtual port sync, `TEST`, `WLJ`, `WLG`/`WLW`, `WLH0`, and `WLB` 60-row telemetry streaming.
+- **Browser UI Verification:** Verified zero console errors across Login, Dashboard, uPlot charting, Anomaly filtering, Virtual COM connection, and Device Configuration screens.
+
+---
+
+## 14. Security
+
+See [SECURITY.md](SECURITY.md) for full details. Key controls include zero direct client database access, salted PBKDF2 password storage, signed cookie claims, `[Authorize]` SignalR Hub, `X-API-KEY` / `X-BRIDGE-KEY` headers, fixed-window rate limiting, and demo account isolation.
+
+---
+
+## 15. Known Limitations
+
+- **Physical Hardware Verification:** End-to-end tests during refactoring were executed against `SimulatedSerialTransport` because no physical DataLogger unit was connected; `RealSerialTransport` preserves the original verified `System.IO.Ports` protocol and should be validated with physical hardware before field deployment.
+- **SMTP Email Delivery:** Verification and password-reset tokens are generated and logged; an external SMTP provider should be plugged in for production email delivery.
+- **Single-Node SignalR:** `UserConnectionManager` stores active connections in memory (use Redis backplane for multi-instance scaling).
+
+---
+
+## 16. Roadmap
+
+- Plug-in SMTP / SendGrid email provider for production verification flows.
+- Persistent server-side telemetry archival & multi-device fleet comparison view.
+- Cross-platform serial bridge daemon (Linux/macOS support via .NET Worker Service).
+- Automated CI/CD GitHub Actions workflow (`dotnet build`, `dotnet test`, Docker image build).
+
+---
+
+## 17. License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
