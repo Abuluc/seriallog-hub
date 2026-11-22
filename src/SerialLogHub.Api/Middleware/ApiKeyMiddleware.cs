@@ -19,6 +19,15 @@ public class ApiKeyMiddleware
         _logger = logger;
     }
 
+    private static bool IsAnonymousAuthBootstrapPath(string path)
+    {
+        return path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith("/register", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith("/SendResetMail", StringComparison.OrdinalIgnoreCase) ||
+               path.Equals("/api/auth/confirm-reset", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith("/resendverificationemail", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task InvokeAsync(HttpContext context, AppDbContext dbContext)
     {
         bool requireApiKey = _configuration.GetValue("ApiSecurity:RequireApiKey", true);
@@ -111,6 +120,15 @@ public class ApiKeyMiddleware
                 return;
             }
 
+            if (context.Items.TryGetValue(OperatorScopeGuard.ContextOperatorEmailKey, out var existingKeyOwner) &&
+                existingKeyOwner is string keyOwner &&
+                !string.Equals(keyOwner, matchedToken.OwnerEmail, StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("API key owner conflicts with operator token owner.");
+                return;
+            }
+
             OperatorScopeGuard.SetAuthenticatedOperator(context, matchedToken.OwnerEmail, matchedToken.ClientType);
         }
         // 3. Or validate HMAC proof signed with the dedicated WebProxySigningSecret (NEVER the shared ApiKey)
@@ -140,6 +158,27 @@ public class ApiKeyMiddleware
             }
 
             OperatorScopeGuard.SetAuthenticatedOperator(context, assertedEmail, "WebServerProxy");
+        }
+
+        // 4. For all non-bootstrap endpoints (/api/user/*, /api/telemetry/*, /api/auth/profile, /api/auth/updatename),
+        // require that an authenticated operator identity has been established before proceeding!
+        if (!IsAnonymousAuthBootstrapPath(path))
+        {
+            bool hasVerifiedOperator =
+                context.Items.TryGetValue(OperatorScopeGuard.ContextCredentialVerifiedKey, out var verified) &&
+                verified is true &&
+                context.Items.TryGetValue(OperatorScopeGuard.ContextOperatorEmailKey, out var opEmail) &&
+                opEmail is string emailStr &&
+                !string.IsNullOrWhiteSpace(emailStr) &&
+                emailStr != "*";
+
+            if (!hasVerifiedOperator)
+            {
+                _logger.LogWarning("Rejected request to protected endpoint {Path}: API key was not accompanied by an authenticated operator identity.", path);
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsync("Authenticated operator identity is required for protected endpoints.");
+                return;
+            }
         }
 
         await _next(context);

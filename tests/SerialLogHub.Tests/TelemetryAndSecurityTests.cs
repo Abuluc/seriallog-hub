@@ -412,6 +412,23 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         await middleware.InvokeAsync(validCtx, _db);
         Assert.True(nextCalled);
         Assert.Equal("alice@example.com", validCtx.Items[OperatorScopeGuard.ContextOperatorEmailKey]);
+
+        // Shared X-API-KEY alone on a protected route (/api/user/getports) WITHOUT an operator token or HMAC proof MUST be rejected by ApiKeyMiddleware!
+        nextCalled = false;
+        var sharedOnlyProtectedCtx = new DefaultHttpContext();
+        sharedOnlyProtectedCtx.Request.Path = "/api/user/getports";
+        sharedOnlyProtectedCtx.Request.Headers["X-API-KEY"] = "test-master-api-key-secret-value-256";
+        await middleware.InvokeAsync(sharedOnlyProtectedCtx, _db);
+        Assert.Equal(StatusCodes.Status401Unauthorized, sharedOnlyProtectedCtx.Response.StatusCode);
+        Assert.False(nextCalled);
+
+        // Shared X-API-KEY on the login bootstrap endpoint (/api/auth/login) is permitted to proceed to AuthController.Login
+        nextCalled = false;
+        var loginBootstrapCtx = new DefaultHttpContext();
+        loginBootstrapCtx.Request.Path = "/api/auth/login";
+        loginBootstrapCtx.Request.Headers["X-API-KEY"] = "test-master-api-key-secret-value-256";
+        await middleware.InvokeAsync(loginBootstrapCtx, _db);
+        Assert.True(nextCalled);
     }
 
     [Fact]
