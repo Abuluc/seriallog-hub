@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SerialLogHub.Api\SerialLogHub.Api.csproj" />
     <ProjectReference Include="..\..\src\SerialLogHub.Desktop\SerialLogHub.Desktop.csproj" />
+    <ProjectReference Include="..\..\src\SerialLogHub.Web\SerialLogHub.Web.csproj" />
   </ItemGroup>
 
 </Project>

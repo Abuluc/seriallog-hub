@@ -26,4 +26,4 @@ jobs:
         run: dotnet build SerialLogHub.sln --configuration Release --no-restore
 
       - name: Run unit tests
-        run: dotnet test tests/SerialLogHub.Tests/SerialLogHub.Tests.csproj --configuration Release --no-build --verbosity normal
+        run: dotnet test SerialLogHub.sln --configuration Release --no-build --verbosity normal

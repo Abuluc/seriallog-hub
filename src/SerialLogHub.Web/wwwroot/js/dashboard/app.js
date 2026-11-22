@@ -1,11 +1,9 @@
 (function () {
     "use strict";
 
-    let csvDB = null;
-    let plotInstance = null;
-    let histChart = null;
-    let scatterChart = null;
-    let doughnutChart = null;
+    const { escapeHtml, saveDataset, getAllDatasets, getDatasetById, parseCsv, detectAnomalies } = window.SlhStorage;
+    const { plotGraph, updateTelemetryStats, renderAnalyticsCharts, destroyAll } = window.SlhCharts;
+
     let originalData = [];
     let filteredData = [];
     let currentPage = 1;
@@ -21,371 +19,10 @@
         humRate: 15.0
     };
 
-    function escapeHtml(value) {
-        return String(value ?? "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#39;");
-    }
-
-    function arrayMin(arr) {
-        let min = Infinity;
-        for (let i = 0; i < arr.length; i++) {
-            if (arr[i] < min) min = arr[i];
-        }
-        return min;
-    }
-
-    function arrayMax(arr) {
-        let max = -Infinity;
-        for (let i = 0; i < arr.length; i++) {
-            if (arr[i] > max) max = arr[i];
-        }
-        return max;
-    }
-
     function isPlaceholderPort(port) {
         if (!port) return true;
         const p = port.trim();
         return !p || p.startsWith("No COM") || p.startsWith("Error:");
-    }
-
-    function initIndexedDB() {
-        return new Promise((resolve, reject) => {
-            if (csvDB) { resolve(csvDB); return; }
-            const req = indexedDB.open("serialLogHubDB", 1);
-            req.onupgradeneeded = (e) => {
-                const db = e.target.result;
-                if (!db.objectStoreNames.contains("csvDataStore")) {
-                    db.createObjectStore("csvDataStore", { keyPath: "id", autoIncrement: true });
-                }
-            };
-            req.onsuccess = (e) => { csvDB = e.target.result; resolve(csvDB); };
-            req.onerror = (e) => reject(e);
-        });
-    }
-
-    async function saveDataset(content, sourceType, parsedChart, fileName) {
-        await initIndexedDB();
-        const now = new Date();
-        const payload = {
-            fileName: fileName || (sourceType === "Serial Port" ? "SerialData.csv" : "Dataset.csv"),
-            rowCount: parsedChart.temperatureData.length,
-            uploadDate: now.toLocaleDateString(),
-            uploadTime: now.toLocaleTimeString(),
-            csvContent: content,
-            situation: sourceType,
-            parsedData: parsedChart
-        };
-
-        return new Promise((resolve, reject) => {
-            const tx = csvDB.transaction("csvDataStore", "readwrite");
-            const req = tx.objectStore("csvDataStore").add({ data: JSON.stringify(payload) });
-            req.onsuccess = (e) => resolve(e.target.result);
-            req.onerror = (e) => reject(e);
-        });
-    }
-
-    async function getAllDatasets() {
-        await initIndexedDB();
-        return new Promise((resolve, reject) => {
-            const tx = csvDB.transaction("csvDataStore", "readonly");
-            const req = tx.objectStore("csvDataStore").getAll();
-            req.onsuccess = () => resolve(req.result || []);
-            req.onerror = (e) => reject(e);
-        });
-    }
-
-    async function getDatasetById(id) {
-        await initIndexedDB();
-        return new Promise((resolve, reject) => {
-            const tx = csvDB.transaction("csvDataStore", "readonly");
-            const req = tx.objectStore("csvDataStore").get(Number(id));
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = (e) => reject(e);
-        });
-    }
-
-    function parseCsv(csv) {
-        const lines = csv.split(/\r?\n/);
-        const temperatureData = [];
-        const humidityData = [];
-        const timeLabels = [];
-        const rows = [];
-        let id = 1;
-
-        for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            const cols = line.split(",");
-            if (cols.length < 10) continue;
-
-            const temp = parseFloat(cols[2]);
-            const hum = parseFloat(cols[3]);
-            if (isNaN(temp) || isNaN(hum)) continue;
-
-            const year = cols[4].trim();
-            const month = cols[5].trim().padStart(2, "0");
-            const day = cols[6].trim().padStart(2, "0");
-            const hour = cols[7].trim().padStart(2, "0");
-            const minute = cols[8].trim().padStart(2, "0");
-            const second = cols[9].trim().padStart(2, "0");
-
-            const isoDate = `${year}-${month}-${day}`;
-            const clock = `${hour}:${minute}:${second}`;
-            const label = `${isoDate} ${clock}`;
-
-            timeLabels.push(label);
-            temperatureData.push(temp);
-            humidityData.push(hum);
-            rows.push({ id: id++, temperature: temp, humidity: hum, date: isoDate, clock: clock });
-        }
-
-        return { chart: { timeLabels, temperatureData, humidityData }, rows };
-    }
-
-    /**
-     * Combined anomaly detector with user-adjustable thresholds:
-     * 1. Rate-of-change spike detection (per 10s normalized)
-     * 2. Absolute threshold & out-of-range detection
-     */
-    function detectAnomalies(rows) {
-        const tempRateMax = anomalyConfig.tempRate;
-        const humRateMax = anomalyConfig.humRate;
-        const tempMaxThreshold = anomalyConfig.maxTemp;
-
-        for (let i = 0; i < rows.length; i++) {
-            const cur = rows[i];
-            cur.temperatureAnomaly = cur.temperature > tempMaxThreshold;
-            cur.humidityAnomaly = cur.humidity < 0 || cur.humidity > 100;
-
-            if (i > 0) {
-                const prev = rows[i - 1];
-                const tCur = new Date(`${cur.date}T${cur.clock}`).getTime();
-                const tPrev = new Date(`${prev.date}T${prev.clock}`).getTime();
-                const dt = (tCur - tPrev) / 1000;
-
-                const dTemp = Math.abs(cur.temperature - prev.temperature);
-                const dHum = Math.abs(cur.humidity - prev.humidity);
-                const normTemp = dt > 0 ? (dTemp * 10) / dt : dTemp;
-                const normHum = dt > 0 ? (dHum * 10) / dt : dHum;
-
-                if (normTemp > tempRateMax) cur.temperatureAnomaly = true;
-                if (normHum > humRateMax) cur.humidityAnomaly = true;
-            }
-        }
-        return rows;
-    }
-
-    function tooltipPlugin(chartData) {
-        let tooltipEl = null;
-        return {
-            hooks: {
-                init: (u) => {
-                    tooltipEl = document.createElement("div");
-                    tooltipEl.className = "uplot-tooltip";
-                    u.over.appendChild(tooltipEl);
-                    u.over.addEventListener("mouseleave", () => { tooltipEl.style.display = "none"; });
-                },
-                setCursor: (u) => {
-                    const idx = u.cursor.idx;
-                    if (idx == null || !chartData.timeLabels[idx]) {
-                        tooltipEl.style.display = "none";
-                        return;
-                    }
-                    const xPos = u.valToPos(u.data[0][idx], "x");
-                    const yPos = Math.min(u.valToPos(u.data[1][idx], "y"), u.valToPos(u.data[2][idx], "y"));
-                    tooltipEl.innerHTML =
-                        `<div><strong>Time:</strong> ${escapeHtml(chartData.timeLabels[idx])}</div>` +
-                        `<div><strong>Temp:</strong> ${chartData.temperatureData[idx]} °C</div>` +
-                        `<div><strong>Humidity:</strong> ${chartData.humidityData[idx]} %</div>`;
-                    tooltipEl.style.left = Math.max(8, xPos + 12) + "px";
-                    tooltipEl.style.top = Math.max(8, yPos - 10) + "px";
-                    tooltipEl.style.display = "block";
-                }
-            }
-        };
-    }
-
-    function plotGraph(chartData) {
-        if (plotInstance) {
-            plotInstance.destroy();
-            plotInstance = null;
-        }
-        const container = document.getElementById("graphContainer");
-        container.innerHTML = "";
-        if (!chartData.temperatureData.length) return;
-
-        const width = container.offsetWidth || 800;
-        const height = 320;
-        const minVal = Math.min(arrayMin(chartData.temperatureData), arrayMin(chartData.humidityData));
-        const maxVal = Math.max(arrayMax(chartData.temperatureData), arrayMax(chartData.humidityData));
-        const yMin = Math.floor(minVal - 2);
-        const yMax = Math.ceil(maxVal + 2);
-
-        const opts = {
-            width,
-            height,
-            scales: {
-                x: { time: false },
-                y: { range: [yMin, yMax] }
-            },
-            axes: [
-                { stroke: "#64748b", grid: { stroke: "rgba(148,163,184,0.2)" }, label: "Sample Index" },
-                { stroke: "#64748b", grid: { stroke: "rgba(148,163,184,0.2)" }, label: "°C / %" }
-            ],
-            series: [
-                { label: "Index" },
-                { label: "Temperature (°C)", stroke: "#ef4444", width: 2 },
-                { label: "Humidity (%)", stroke: "#2563eb", width: 2 }
-            ],
-            plugins: [tooltipPlugin(chartData)]
-        };
-
-        const data = [
-            chartData.temperatureData.map((_, i) => i + 1),
-            chartData.temperatureData,
-            chartData.humidityData
-        ];
-
-        plotInstance = new uPlot(opts, data, container);
-    }
-
-    function updateTelemetryStats(rows) {
-        const setVal = (id, text) => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = text;
-        };
-
-        if (!rows || !rows.length) {
-            setVal("statMinTemp", "-- °C");
-            setVal("statAvgTemp", "-- °C");
-            setVal("statMaxTemp", "-- °C");
-            setVal("statMinHum", "-- %");
-            setVal("statAvgHum", "-- %");
-            setVal("statMaxHum", "-- %");
-            return;
-        }
-
-        const temps = rows.map(r => r.temperature);
-        const hums = rows.map(r => r.humidity);
-        const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
-
-        setVal("statMinTemp", `${arrayMin(temps).toFixed(2)} °C`);
-        setVal("statAvgTemp", `${avg(temps).toFixed(2)} °C`);
-        setVal("statMaxTemp", `${arrayMax(temps).toFixed(2)} °C`);
-        setVal("statMinHum", `${arrayMin(hums).toFixed(2)} %`);
-        setVal("statAvgHum", `${avg(hums).toFixed(2)} %`);
-        setVal("statMaxHum", `${arrayMax(hums).toFixed(2)} %`);
-    }
-
-    function destroyAnalyticsCharts() {
-        if (histChart) { histChart.destroy(); histChart = null; }
-        if (scatterChart) { scatterChart.destroy(); scatterChart = null; }
-        if (doughnutChart) { doughnutChart.destroy(); doughnutChart = null; }
-    }
-
-    function renderAnalyticsCharts(rows) {
-        destroyAnalyticsCharts();
-        if (typeof Chart === "undefined" || !rows || !rows.length) return;
-
-        // 1. Temperature Distribution Histogram
-        const buckets = [
-            { label: "< 20°C", count: 0 },
-            { label: "20–22°C", count: 0 },
-            { label: "22–24°C", count: 0 },
-            { label: "24–26°C", count: 0 },
-            { label: "> 26°C", count: 0 }
-        ];
-        rows.forEach(r => {
-            if (r.temperature < 20) buckets[0].count++;
-            else if (r.temperature < 22) buckets[1].count++;
-            else if (r.temperature < 24) buckets[2].count++;
-            else if (r.temperature < 26) buckets[3].count++;
-            else buckets[4].count++;
-        });
-
-        const histCtx = document.getElementById("tempHistogramChart");
-        if (histCtx) {
-            histChart = new Chart(histCtx, {
-                type: "bar",
-                data: {
-                    labels: buckets.map(b => b.label),
-                    datasets: [{
-                        label: "Readings",
-                        data: buckets.map(b => b.count),
-                        backgroundColor: ["#38bdf8", "#3b82f6", "#2563eb", "#f59e0b", "#ef4444"],
-                        borderRadius: 6
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-                }
-            });
-        }
-
-        // 2. Temperature vs Humidity Scatter Plot
-        const normalPts = [];
-        const anomalyPts = [];
-        rows.forEach(r => {
-            const pt = { x: r.temperature, y: r.humidity };
-            if (r.temperatureAnomaly || r.humidityAnomaly) anomalyPts.push(pt);
-            else normalPts.push(pt);
-        });
-
-        const scatterCtx = document.getElementById("tempHumScatterChart");
-        if (scatterCtx) {
-            scatterChart = new Chart(scatterCtx, {
-                type: "scatter",
-                data: {
-                    datasets: [
-                        { label: "Normal", data: normalPts, backgroundColor: "rgba(37, 99, 235, 0.65)", pointRadius: 4 },
-                        { label: "Anomaly", data: anomalyPts, backgroundColor: "#dc2626", pointRadius: 6 }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { title: { display: true, text: "Temperature (°C)" } },
-                        y: { title: { display: true, text: "Humidity (%)" } }
-                    }
-                }
-            });
-        }
-
-        // 3. Health & Anomaly Breakdown Doughnut
-        const tempOnly = rows.filter(r => r.temperatureAnomaly && !r.humidityAnomaly).length;
-        const humOnly = rows.filter(r => !r.temperatureAnomaly && r.humidityAnomaly).length;
-        const both = rows.filter(r => r.temperatureAnomaly && r.humidityAnomaly).length;
-        const normal = rows.length - tempOnly - humOnly - both;
-
-        const doughnutCtx = document.getElementById("anomalyDoughnutChart");
-        if (doughnutCtx) {
-            doughnutChart = new Chart(doughnutCtx, {
-                type: "doughnut",
-                data: {
-                    labels: ["Normal", "Temp Anomaly", "Hum Anomaly", "Dual Spike"],
-                    datasets: [{
-                        data: [normal, tempOnly, humOnly, both],
-                        backgroundColor: ["#16a34a", "#ef4444", "#f59e0b", "#7f1d1d"],
-                        borderWidth: 2,
-                        borderColor: "#ffffff"
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    cutout: "62%",
-                    plugins: { legend: { position: "bottom" } }
-                }
-            });
-        }
     }
 
     function applyFilters() {
@@ -462,7 +99,7 @@
 
     function updateAnomalyDisplayAndCharts() {
         if (!originalData.length) return;
-        detectAnomalies(originalData);
+        detectAnomalies(originalData, anomalyConfig);
         const anomalies = originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly).length;
         document.getElementById("kpiAnomalyCount").textContent = String(anomalies);
         renderAnalyticsCharts(originalData);
@@ -476,7 +113,7 @@
             return false;
         }
 
-        originalData = detectAnomalies(parsed.rows);
+        originalData = detectAnomalies(parsed.rows, anomalyConfig);
         const anomalies = originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly).length;
         document.getElementById("kpiTotalRows").textContent = String(originalData.length);
         document.getElementById("kpiAnomalyCount").textContent = String(anomalies);
@@ -537,7 +174,7 @@
                 if (!record) return;
                 const meta = JSON.parse(record.data);
                 const parsed = parseCsv(meta.csvContent);
-                originalData = detectAnomalies(parsed.rows);
+                originalData = detectAnomalies(parsed.rows, anomalyConfig);
                 document.getElementById("kpiTotalRows").textContent = String(originalData.length);
                 document.getElementById("kpiAnomalyCount").textContent = String(originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly).length);
                 plotGraph(parsed.chart);
@@ -643,7 +280,7 @@
 
     async function refreshPorts() {
         try {
-            const res = await fetch("/Home/Getavabileport");
+            const res = await fetch("/Home/GetAvailablePorts");
             if (!res.ok) return;
             const ports = await res.json();
             if (!Array.isArray(ports)) return;
@@ -667,7 +304,6 @@
             if (prev && ports.includes(prev)) {
                 select.value = prev;
             } else if (conn && conn.Connected && conn.currentPort && ports.length > 0 && !isPlaceholderPort(ports[0])) {
-                // Connected port disappeared from bridge port list
                 window.SerialLogHub.clearConnectionCookie();
                 setConnectedUi(false);
                 appendTerminal(`WARN: Active port ${conn.currentPort} is no longer available.`);
@@ -747,7 +383,7 @@
             const battRes = await $.get("/Settings/GetBattery", payload);
             const timeRes = await $.post("/Settings/GetCalibrationTime", payload);
 
-            const labelText = extractDiag(commRes, "CMD,OK,COMMENT,");
+            const labelText = extractDiag(commRes, "CMD,OK,COMM,");
             const battRaw = extractDiag(battRes, "CMD,OK,BAT,");
             const battText = battRes?.status === "success" && !battRaw.endsWith("%") ? `${battRaw}%` : battRaw;
             const clockText = extractDiag(timeRes, "CMD,OK,TIME,");
@@ -832,16 +468,12 @@
         document.getElementById("resetGraphBtn").addEventListener("click", function () {
             originalData = [];
             filteredData = [];
-            if (plotInstance) {
-                plotInstance.destroy();
-                plotInstance = null;
-            }
+            destroyAll();
             document.getElementById("graphContainer").innerHTML = "";
             document.getElementById("kpiTotalRows").textContent = "0";
             document.getElementById("kpiAnomalyCount").textContent = "0";
             document.getElementById("datasetSourceBadge").style.display = "none";
             updateTelemetryStats([]);
-            destroyAnalyticsCharts();
             renderTable();
         });
 
@@ -859,7 +491,6 @@
             toastr.success("Exported Excel file.");
         });
 
-        // Adjustable Anomaly Thresholds
         const toggleThresholds = document.getElementById("toggleThresholdControls");
         if (toggleThresholds) {
             toggleThresholds.addEventListener("change", function () {

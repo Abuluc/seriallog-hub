@@ -37,7 +37,9 @@ public class HomeController : Controller
     public IActionResult KVKK() => View();
 
     [Authorize]
-    public IActionResult CrateTable() => View();
+    [HttpGet("Home/DataTable")]
+    [HttpGet("Home/CrateTable")]
+    public IActionResult DataTable() => View("CrateTable");
 
     [Authorize]
     public IActionResult Graph() => View();
@@ -114,7 +116,7 @@ public class HomeController : Controller
             if (connectionIds.Count > 0)
             {
                 await _hubContext.Clients.Clients(connectionIds)
-                    .SendAsync("datareadding", payload.AppName, payload.Message, payload.Data, ct);
+                    .SendAsync("DataReading", payload.AppName, payload.Message, payload.Data, ct);
                 return Ok("Data sent to the user.");
             }
 
@@ -147,7 +149,7 @@ public class HomeController : Controller
             Message = model.MessageToSend.Trim(),
             Timestamp = DateTime.UtcNow,
             CommandID = Guid.NewGuid().ToString(),
-            Response = "Response yok"
+            Response = "Pending"
         };
 
         var result = await _apiClient.SendAndWaitForResponseAsync(command, ct);
@@ -203,7 +205,7 @@ public class HomeController : Controller
             Message = "TEST",
             Timestamp = DateTime.UtcNow,
             CommandID = Guid.NewGuid().ToString(),
-            Response = "Response yok"
+            Response = "Pending"
         };
 
         var response = await _apiClient.SendAndWaitForResponseAsync(command, ct);
@@ -284,8 +286,9 @@ public class HomeController : Controller
     }
 
     [Authorize]
-    [HttpGet]
-    public async Task<IActionResult> Getavabileport(CancellationToken ct)
+    [HttpGet("Home/GetAvailablePorts")]
+    [HttpGet("Home/Getavabileport")]
+    public async Task<IActionResult> GetAvailablePorts(CancellationToken ct)
     {
         var ports = await GetUserPortsAsync(ct);
         return Ok(ports);
@@ -309,7 +312,7 @@ public class HomeController : Controller
             Message = $"WLS0,{Time}",
             Timestamp = DateTime.UtcNow,
             CommandID = Guid.NewGuid().ToString(),
-            Response = "Response yok"
+            Response = "Pending"
         };
 
         var response = await _apiClient.SendAndWaitForResponseAsync(command, ct);

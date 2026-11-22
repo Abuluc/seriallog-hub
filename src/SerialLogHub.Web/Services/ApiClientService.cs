@@ -152,7 +152,10 @@ public class ApiClientService
             {
                 var current = await GetCommandResponseAsync(command.Email, command.CommandID, timeoutCts.Token);
                 if (current != null &&
-                    (current.IsProcessed || (!string.IsNullOrWhiteSpace(current.Response) && current.Response != "Response yok")))
+                    (current.IsProcessed ||
+                     (!string.IsNullOrWhiteSpace(current.Response) &&
+                      !string.Equals(current.Response, "Pending", StringComparison.OrdinalIgnoreCase) &&
+                      !string.Equals(current.Response, "Response yok", StringComparison.OrdinalIgnoreCase))))
                 {
                     return current;
                 }

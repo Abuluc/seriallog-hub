@@ -10,5 +10,5 @@ public class CommandEntity
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string CommandID { get; set; } = string.Empty;
     public bool IsProcessed { get; set; }
-    public string Response { get; set; } = "Response yok";
+    public string Response { get; set; } = "Pending";
 }

@@ -2,6 +2,15 @@
 
 All notable changes to **SerialLog Hub** are documented in this file.
 
+## [1.3.0] - 2026-11-22
+
+### Improved
+- **Solution & CI Pipeline Integrity:** Added `SerialLogHub.Tests` to `SerialLogHub.sln` and updated `.github/workflows/ci.yml` so `dotnet build SerialLogHub.sln` and `dotnet test SerialLogHub.sln --no-build` build and execute all tests cleanly in CI.
+- **Expanded Automated Test Suite (22 xUnit Tests):** Added `UserControllerTests` (SQLite in-memory tests for 60s stale command expiration, `UpdateCommand` idempotency, `GetCommandHistory` ordering/error flags, and port sync) and `WebLayerTests` (multi-tab `UserConnectionManager`, `SettingsController.SetMM` threshold validation, and `HomeController.TestConnection` placeholder rejection).
+- **Modular Dashboard Frontend:** Split the monolithic `dashboard.js` into focused modules under `wwwroot/js/dashboard/` (`storage.js`, `charts.js`, `app.js`).
+- **Clean English Naming & Routes:** Replaced legacy `"Response yok"` sentinel with `"Pending"`, renamed SignalR event `datareadding` to `DataReading`, and added clean English route names (`/Home/GetAvailablePorts`, `/Home/DataTable`, `/Settings/SetComment`) while keeping legacy route aliases for backwards compatibility.
+- **Refreshed Screenshots:** Updated `docs/screenshots/02-dashboard-telemetry.png` to showcase Device Diagnostics, Adjustable Anomaly Thresholds, and Command Audit Log.
+
 ## [1.2.0] - 2026-11-22
 
 ### Added

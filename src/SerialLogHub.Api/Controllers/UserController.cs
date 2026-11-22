@@ -103,7 +103,7 @@ public class UserController : ControllerBase
             Timestamp = request.Timestamp == default ? DateTime.UtcNow : request.Timestamp,
             CommandID = commandId,
             IsProcessed = false,
-            Response = string.IsNullOrWhiteSpace(request.Response) ? "Response yok" : request.Response
+            Response = string.IsNullOrWhiteSpace(request.Response) ? "Pending" : request.Response
         };
 
         _db.Commands.Add(command);

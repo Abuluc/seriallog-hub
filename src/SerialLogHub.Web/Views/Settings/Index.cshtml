@@ -322,7 +322,7 @@
                     if (currentStep === 1) {
                         const comment = document.getElementById("wizCommentInput").value.trim().toUpperCase();
                         if (!comment) { toastr.warning("Enter a description or click Skip Step."); return; }
-                        const res = await $.post("/Settings/Settocomment", {
+                        const res = await $.post("/Settings/SetComment", {
                             model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud },
                             Comment: comment
                         });

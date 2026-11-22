@@ -37,8 +37,9 @@ public class SettingsController : Controller
     public Task<JsonResult> SetTime(CalibrationModel model, string Time, CancellationToken ct)
         => DispatchDeviceCommandAsync(model, $"WLA{Time}", ct);
 
-    [HttpPost]
-    public Task<JsonResult> Settocomment(CalibrationModel model, string Comment, CancellationToken ct)
+    [HttpPost("Settings/SetComment")]
+    [HttpPost("Settings/Settocomment")]
+    public Task<JsonResult> SetComment(CalibrationModel model, string Comment, CancellationToken ct)
         => DispatchDeviceCommandAsync(model, $"WLG, {Comment}", ct);
 
     [HttpPost]
@@ -115,7 +116,7 @@ public class SettingsController : Controller
             Message = commandMessage,
             Timestamp = DateTime.UtcNow,
             CommandID = Guid.NewGuid().ToString(),
-            Response = "Response yok"
+            Response = "Pending"
         };
 
         var result = await _apiClient.SendAndWaitForResponseAsync(command, ct);

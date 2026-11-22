@@ -153,7 +153,7 @@
             }, 6000);
         });
 
-        connection.on("datareadding", (appName, message, responseMessage) => {
+        connection.on("DataReading", (appName, message, responseMessage) => {
             if (message !== "Finish") {
                 window.SerialLogHub.showLoading(message || "Reading DataLogger telemetry...");
                 return;
