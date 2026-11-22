@@ -1,0 +1,53 @@
+# Render.com Blueprint for SerialLog Hub Live Demo (HTTPS included)
+# Deploy directly from https://render.com/deploy?repo=https://github.com/Abuluc/seriallog-hub
+services:
+  - type: web
+    name: serialloghub-api
+    runtime: docker
+    dockerfilePath: ./deployment/Dockerfile.api
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ApiSecurity__RequireApiKey
+        value: "true"
+      - key: ApiSecurity__ApiKey
+        sync: false
+      - key: DemoMode__Enabled
+        value: "true"
+      - key: DemoMode__CloudVirtualDeviceResponder
+        value: "true"
+      - key: DemoMode__ResetIntervalMinutes
+        value: "60"
+      - key: DemoMode__DemoEmail
+        value: demo@serialloghub.example
+      - key: DemoMode__DemoUsername
+        value: demo_operator
+      - key: DemoMode__DemoPassword
+        sync: false
+
+  - type: web
+    name: serialloghub-web
+    runtime: docker
+    dockerfilePath: ./deployment/Dockerfile.web
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ApiSettings__BaseUrl
+        sync: false
+      - key: ApiSettings__ApiKey
+        sync: false
+      - key: BridgeSecurity__RequireBridgeKey
+        value: "true"
+      - key: BridgeSecurity__BridgeKey
+        generateValue: true
+      - key: DemoMode__Enabled
+        value: "true"
+      - key: DemoMode__DemoEmail
+        value: demo@serialloghub.example
+      - key: DemoMode__DemoUsername
+        value: demo_operator
