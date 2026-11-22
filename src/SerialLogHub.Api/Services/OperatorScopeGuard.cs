@@ -60,21 +60,21 @@ public static class OperatorScopeGuard
         return FixedTimeEquals(providedRawSecret, storedKeyOrHash);
     }
 
-    public static string ComputeOperatorHmacProof(string operatorEmail, long unixTimestampSeconds, string signingSecret)
+    public static string ComputeOperatorHmacProof(string operatorEmail, long unixTimestampSeconds, string webProxySigningSecret)
     {
         string canonical = $"{operatorEmail.Trim().ToLowerInvariant()}|{unixTimestampSeconds}";
-        byte[] keyBytes = Encoding.UTF8.GetBytes(signingSecret);
+        byte[] keyBytes = Encoding.UTF8.GetBytes(webProxySigningSecret);
         byte[] dataBytes = Encoding.UTF8.GetBytes(canonical);
         byte[] hmac = HMACSHA256.HashData(keyBytes, dataBytes);
         return Convert.ToHexString(hmac).ToLowerInvariant();
     }
 
-    public static bool VerifyOperatorHmacProof(string operatorEmail, string? timestampHeader, string? proofHeader, string? signingSecret)
+    public static bool VerifyOperatorHmacProof(string operatorEmail, string? timestampHeader, string? proofHeader, string? webProxySigningSecret)
     {
         if (string.IsNullOrWhiteSpace(operatorEmail) ||
             string.IsNullOrWhiteSpace(timestampHeader) ||
             string.IsNullOrWhiteSpace(proofHeader) ||
-            string.IsNullOrWhiteSpace(signingSecret))
+            string.IsNullOrWhiteSpace(webProxySigningSecret))
         {
             return false;
         }
@@ -90,8 +90,30 @@ public static class OperatorScopeGuard
             return false;
         }
 
-        string expectedProof = ComputeOperatorHmacProof(operatorEmail, unixSeconds, signingSecret);
+        string expectedProof = ComputeOperatorHmacProof(operatorEmail, unixSeconds, webProxySigningSecret);
         return FixedTimeEquals(proofHeader.Trim().ToLowerInvariant(), expectedProof);
+    }
+
+    /// <summary>
+    /// Resolves the dedicated WebProxySigningSecret and ensures it is NEVER identical to the shared ApiSecurity:ApiKey.
+    /// This guarantees that an API consumer or Desktop Bridge possessing X-API-KEY cannot forge HMAC operator proofs.
+    /// </summary>
+    public static string? ResolveDistinctWebProxySigningSecret(IConfiguration? configuration)
+    {
+        string? webProxySecret = configuration?["ApiSecurity:WebProxySigningSecret"];
+        if (string.IsNullOrWhiteSpace(webProxySecret))
+        {
+            return null;
+        }
+
+        string? sharedApiKey = configuration?["ApiSecurity:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(sharedApiKey) && FixedTimeEquals(webProxySecret.Trim(), sharedApiKey.Trim()))
+        {
+            // Reject when WebProxySigningSecret is identical to the shared ApiKey
+            return null;
+        }
+
+        return webProxySecret.Trim();
     }
 
     public static void SetAuthenticatedOperator(HttpContext httpContext, string operatorEmail, string clientType = "OperatorSession")
@@ -110,7 +132,10 @@ public static class OperatorScopeGuard
 
     /// <summary>
     /// Authoritatively verifies that the caller is authenticated as targetEmail.
-    /// Strictly fail-closed: null HttpContext, missing identity, or unverified headers are always rejected.
+    /// Strictly fail-closed:
+    /// - Uses indexed O(1) SQL lookup on ApiKeys.Key (never loads all keys into memory).
+    /// - Rejects any wildcard ("*") or ownerless key.
+    /// - Requires a distinct WebProxySigningSecret (different from ApiSecurity:ApiKey) for HMAC proofs.
     /// </summary>
     public static async Task<(bool IsAuthorized, int StatusCode, string ErrorMessage)> AuthorizeOperatorAsync(
         HttpContext? httpContext,
@@ -123,7 +148,6 @@ public static class OperatorScopeGuard
             return (false, StatusCodes.Status400BadRequest, "Target operator email is required.");
         }
 
-        // Fail closed when authentication context is null
         if (httpContext == null)
         {
             return (false, StatusCodes.Status401Unauthorized, "Missing authentication context (fail-closed).");
@@ -131,12 +155,13 @@ public static class OperatorScopeGuard
 
         string requestedEmail = targetEmail.Trim().ToLowerInvariant();
 
-        // 1. Check if ApiKeyMiddleware or server authentication already established a verified operator identity
+        // 1. Check if ApiKeyMiddleware already established a verified operator identity
         if (httpContext.Items.TryGetValue(ContextCredentialVerifiedKey, out var verifiedObj) &&
             verifiedObj is true &&
             httpContext.Items.TryGetValue(ContextOperatorEmailKey, out var boundEmailObj) &&
             boundEmailObj is string boundEmail &&
-            !string.IsNullOrWhiteSpace(boundEmail))
+            !string.IsNullOrWhiteSpace(boundEmail) &&
+            boundEmail != "*")
         {
             if (httpContext.Request.Headers.TryGetValue(OperatorEmailHeaderName, out var headerEmail) &&
                 !string.IsNullOrWhiteSpace(headerEmail) &&
@@ -153,7 +178,7 @@ public static class OperatorScopeGuard
             return (true, StatusCodes.Status200OK, string.Empty);
         }
 
-        // 2. Check if the request carries an explicit operator-bound token (X-OPERATOR-TOKEN) in the database
+        // 2. Check database-backed operator token (X-OPERATOR-TOKEN) using direct indexed SQL query (no ToListAsync)
         if (httpContext.Request.Headers.TryGetValue(OperatorTokenHeaderName, out var tokenHeader))
         {
             string rawToken = tokenHeader.ToString().Trim();
@@ -165,7 +190,7 @@ public static class OperatorScopeGuard
             string tokenHash = HashCredential(rawToken);
             var keyEntity = await db.ApiKeys
                 .AsNoTracking()
-                .FirstOrDefaultAsync(k => k.Key == tokenHash || k.Key == rawToken);
+                .FirstOrDefaultAsync(k => k.Key == tokenHash);
 
             if (keyEntity == null || keyEntity.IsRevoked || keyEntity.ExpiresAt <= DateTime.UtcNow)
             {
@@ -193,7 +218,7 @@ public static class OperatorScopeGuard
             return (true, StatusCodes.Status200OK, string.Empty);
         }
 
-        // 3. Check if the request carries a signed WebServer/Bridge HMAC proof (X-OPERATOR-EMAIL + X-OPERATOR-TIMESTAMP + X-OPERATOR-PROOF)
+        // 3. Check WebServer HMAC proof signed with a dedicated WebProxySigningSecret (NEVER the shared ApiKey)
         if (httpContext.Request.Headers.TryGetValue(OperatorEmailHeaderName, out var scopeHeader))
         {
             string assertedEmail = scopeHeader.ToString().Trim().ToLowerInvariant();
@@ -205,13 +230,13 @@ public static class OperatorScopeGuard
             if (httpContext.Request.Headers.TryGetValue(OperatorTimestampHeaderName, out var tsHeader) &&
                 httpContext.Request.Headers.TryGetValue(OperatorProofHeaderName, out var proofHeader))
             {
-                string? signingSecret = configuration?["ApiSecurity:ApiKey"];
-                if (string.IsNullOrWhiteSpace(signingSecret))
+                string? webProxySecret = ResolveDistinctWebProxySigningSecret(configuration);
+                if (string.IsNullOrWhiteSpace(webProxySecret))
                 {
-                    return (false, StatusCodes.Status401Unauthorized, "Server signing secret is not configured.");
+                    return (false, StatusCodes.Status401Unauthorized, "Dedicated WebProxySigningSecret is not configured or conflicts with shared ApiKey.");
                 }
 
-                if (!VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), signingSecret))
+                if (!VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), webProxySecret))
                 {
                     return (false, StatusCodes.Status401Unauthorized, "Invalid or expired cryptographic operator proof.");
                 }
@@ -221,7 +246,7 @@ public static class OperatorScopeGuard
                     return (false, StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
                 }
 
-                SetAuthenticatedOperator(httpContext, assertedEmail, "WebServer");
+                SetAuthenticatedOperator(httpContext, assertedEmail, "WebServerProxy");
                 return (true, StatusCodes.Status200OK, string.Empty);
             }
 
@@ -230,9 +255,9 @@ public static class OperatorScopeGuard
                 return (false, StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
             }
 
-            return (false, StatusCodes.Status401Unauthorized, "Unverified X-OPERATOR-EMAIL header: cryptographic operator token or HMAC proof is required.");
+            return (false, StatusCodes.Status401Unauthorized, "Unverified X-OPERATOR-EMAIL header: cryptographic operator token or WebProxy HMAC proof is required.");
         }
 
-        return (false, StatusCodes.Status401Unauthorized, "Missing authenticated operator identity (X-OPERATOR-TOKEN or signed X-OPERATOR-EMAIL proof required).");
+        return (false, StatusCodes.Status401Unauthorized, "Missing authenticated operator identity (X-OPERATOR-TOKEN or signed WebProxy proof required).");
     }
 }

@@ -9,12 +9,12 @@ Write-Host "Building SerialLogHub.sln..." -ForegroundColor Cyan
 dotnet build "$root\SerialLogHub.sln"
 
 Write-Host "Starting SerialLogHub.Api on http://localhost:8080 ..." -ForegroundColor Green
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root'; dotnet run --no-build --project src\SerialLogHub.Api --urls http://localhost:8080"
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root'; `$env:ASPNETCORE_ENVIRONMENT='Development'; dotnet run --no-build --project src\SerialLogHub.Api --urls http://localhost:8080"
 
 Start-Sleep -Seconds 2
 
 Write-Host "Starting SerialLogHub.Web on http://localhost:3000 ..." -ForegroundColor Green
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root'; dotnet run --no-build --project src\SerialLogHub.Web --urls http://localhost:3000"
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root'; `$env:ASPNETCORE_ENVIRONMENT='Development'; dotnet run --no-build --project src\SerialLogHub.Web --urls http://localhost:3000"
 
 Start-Sleep -Seconds 2
 

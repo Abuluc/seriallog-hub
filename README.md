@@ -8,7 +8,7 @@
 [![.NET 10 LTS](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-MVC%20%2B%20Web%20API-0078D4)](https://learn.microsoft.com/aspnet/core/)
 [![SignalR](https://img.shields.io/badge/SignalR-Real--Time-0ea5e9)](https://learn.microsoft.com/aspnet/core/signalr/)
-[![SQLite](https://img.shields.io/badge/SQLite-EF%20Core%208-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-EF%20Core%2010-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Render-46E3B7?logo=render&logoColor=black)](https://serialloghub-web.onrender.com)
 
@@ -36,17 +36,17 @@
 
 ```mermaid
 flowchart LR
-    Browser["Web Browser\n(uPlot, IndexedDB, ExcelJS, SignalR)"]
-    Web["SerialLogHub.Web\n(ASP.NET Core 8 MVC + SignalR)\n:3000"]
-    API["SerialLogHub.Api\n(ASP.NET Core 8 REST API)\n:8080"]
+    Browser["Web Browser\n(uPlot, Chart.js, IndexedDB, ExcelJS, SignalR)"]
+    Web["SerialLogHub.Web\n(ASP.NET Core 10 MVC + SignalR)\n:3000"]
+    API["SerialLogHub.Api\n(ASP.NET Core 10 REST API)\n:8080"]
     DB[("SQLite\nserialloghub.db")]
-    Desktop["SerialLogHub.Desktop\n(.NET 8 Windows COM Bridge)"]
+    Desktop["SerialLogHub.Desktop\n(.NET 10 Windows COM Bridge)"]
     Device["DataLogger Hardware\n(Real COM / Virtual Demo)"]
 
     Browser <-->|"HTTP + SignalR"| Web
-    Web <-->|"REST + X-API-KEY"| API
+    Web <-->|"REST + X-API-KEY + X-OPERATOR-TOKEN"| API
     API <--> DB
-    Desktop <-->|"REST + X-API-KEY"| API
+    Desktop <-->|"REST + X-API-KEY + X-OPERATOR-TOKEN"| API
     Desktop -->|"Webhooks + X-BRIDGE-KEY"| Web
     Desktop <-->|"SerialPort / Simulator"| Device
 ```

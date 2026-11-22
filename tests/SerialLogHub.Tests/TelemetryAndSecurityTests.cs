@@ -47,6 +47,7 @@ public sealed class TelemetryAndSecurityTests : IDisposable
             {
                 ["ApiSecurity:RequireApiKey"] = "true",
                 ["ApiSecurity:ApiKey"] = "test-master-api-key-secret-value-256",
+                ["ApiSecurity:WebProxySigningSecret"] = "test-distinct-web-proxy-hmac-secret-512",
                 ["BridgeSecurity:RequireBridgeKey"] = "true",
                 ["BridgeSecurity:BridgeKey"] = "test-bridge-secret-key-value-256"
             })
@@ -325,7 +326,7 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         Assert.Equal(StatusCodes.Status401Unauthorized, revRes.StatusCode);
 
         long staleTimestamp = DateTimeOffset.UtcNow.AddMinutes(-15).ToUnixTimeSeconds();
-        string staleProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", staleTimestamp, "test-master-api-key-secret-value-256");
+        string staleProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", staleTimestamp, "test-distinct-web-proxy-hmac-secret-512");
         var replayCtx = new DefaultHttpContext();
         replayCtx.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "alice@example.com";
         replayCtx.Request.Headers[OperatorScopeGuard.OperatorTimestampHeaderName] = staleTimestamp.ToString();
@@ -335,8 +336,21 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var replayRes = Assert.IsType<ObjectResult>(await userController.GetPorts("alice@example.com"));
         Assert.Equal(StatusCodes.Status401Unauthorized, replayRes.StatusCode);
 
+        // HMAC forged using the shared ApiSecurity:ApiKey (instead of WebProxySigningSecret) MUST be rejected with 401!
+        long nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        string forgedWithSharedApiKey = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", nowTs, "test-master-api-key-secret-value-256");
+        var sharedKeyHmacCtx = new DefaultHttpContext();
+        sharedKeyHmacCtx.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "alice@example.com";
+        sharedKeyHmacCtx.Request.Headers[OperatorScopeGuard.OperatorTimestampHeaderName] = nowTs.ToString();
+        sharedKeyHmacCtx.Request.Headers[OperatorScopeGuard.OperatorProofHeaderName] = forgedWithSharedApiKey;
+        userController.ControllerContext = new ControllerContext { HttpContext = sharedKeyHmacCtx };
+
+        var forgedHmacRes = Assert.IsType<ObjectResult>(await userController.GetPorts("alice@example.com"));
+        Assert.Equal(StatusCodes.Status401Unauthorized, forgedHmacRes.StatusCode);
+
+        // Valid current HMAC proof signed with the dedicated WebProxySigningSecret -> Authorized!
         long freshTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        string freshProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", freshTimestamp, "test-master-api-key-secret-value-256");
+        string freshProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", freshTimestamp, "test-distinct-web-proxy-hmac-secret-512");
         var validHmacCtx = new DefaultHttpContext();
         validHmacCtx.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "alice@example.com";
         validHmacCtx.Request.Headers[OperatorScopeGuard.OperatorTimestampHeaderName] = freshTimestamp.ToString();
@@ -425,12 +439,18 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     [Fact]
     public async Task DatabaseMigration_UpgradesLegacyV1SqliteDatabase_AndFailsWhenCoreTableMissing()
     {
-        // 1. Missing core tables must fail observably (not swallow exceptions)
+        // 1. Missing core tables must fail observably when requirePreExistingCoreTables is true
         using var emptyConn = new SqliteConnection("DataSource=:memory:");
         await emptyConn.OpenAsync();
         var emptyOpts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(emptyConn).Options;
         using var emptyDb = new AppDbContext(emptyOpts);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => DbSeeder.UpgradeSchemaAndMigrateAsync(emptyDb));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            DbSeeder.UpgradeSchemaAndMigrateAsync(emptyDb, requirePreExistingCoreTables: true));
+
+        // 1b. Fresh database initializes cleanly via standard EF Core 10 MigrateAsync()
+        await DbSeeder.UpgradeSchemaAndMigrateAsync(emptyDb);
+        var appliedMigrations = await emptyDb.Database.GetAppliedMigrationsAsync();
+        Assert.Contains("20261122000000_InitialSerialLogHubSchema", appliedMigrations);
 
         // 2. Legacy v1 schema upgrade preserves all rows and hashes plaintext keys
         using var legacyConn = new SqliteConnection("DataSource=:memory:");

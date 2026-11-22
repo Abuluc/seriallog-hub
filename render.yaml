@@ -22,7 +22,7 @@ services:
       - key: DemoMode__ResetIntervalMinutes
         value: "60"
       - key: DemoMode__DemoEmail
-        value: demo@serialloghub.example
+        value: demo@serialloghub.local
       - key: DemoMode__DemoUsername
         value: demo_operator
       - key: DemoMode__DemoPassword
@@ -48,6 +48,6 @@ services:
       - key: DemoMode__Enabled
         value: "true"
       - key: DemoMode__DemoEmail
-        value: demo@serialloghub.example
+        value: demo@serialloghub.local
       - key: DemoMode__DemoUsername
         value: demo_operator

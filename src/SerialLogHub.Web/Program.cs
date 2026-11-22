@@ -26,6 +26,7 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 });
 
 builder.Services.AddSignalR();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<UserConnectionManager>();
 builder.Services.AddControllersWithViews();
 

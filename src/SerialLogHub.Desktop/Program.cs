@@ -39,7 +39,18 @@ internal static class Program
     private static async Task<int> RunHeadlessAsync(BridgeConfiguration config, string[] args)
     {
         string email = GetArgValue(args, "--email") ?? config.DemoEmail;
+        string password = GetArgValue(args, "--password") ?? "Demo1234!";
         using var apiClient = new BridgeApiClient(config);
+
+        try
+        {
+            await apiClient.LoginAsync(email, config.DemoUsername, password);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Bridge] Warning: initial headless sign-in deferred ({ex.Message})");
+        }
+
         var engine = new BridgeEngine(
             apiClient,
             new RealSerialTransport(),

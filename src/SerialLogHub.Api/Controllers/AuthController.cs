@@ -45,9 +45,40 @@ public class AuthController : ControllerBase
         }
 
         string normalizedIdentifier = rawIdentifier.Trim().ToLowerInvariant();
+        bool isDemoAlias = normalizedIdentifier is "demo@serialloghub.local" or "demo@serialloghub.example" or "demo_operator";
+
         var user = await _db.Users.FirstOrDefaultAsync(u =>
             u.Email.ToLower() == normalizedIdentifier ||
-            u.Username.ToLower() == normalizedIdentifier);
+            u.Username.ToLower() == normalizedIdentifier ||
+            (isDemoAlias && (u.Email.ToLower() == "demo@serialloghub.local" ||
+                             u.Email.ToLower() == "demo@serialloghub.example" ||
+                             u.Username.ToLower() == "demo_operator")));
+
+        // Self-heal demo account if DemoMode is enabled (or database has 0 users) and user attempts demo login
+        if (user == null && isDemoAlias && (_configuration.GetValue("DemoMode:Enabled", false) || !await _db.Users.AnyAsync()))
+        {
+            string demoEmail = (_configuration["DemoMode:DemoEmail"] ?? "demo@serialloghub.local").Trim().ToLowerInvariant();
+            string demoUser = _configuration["DemoMode:DemoUsername"] ?? "demo_operator";
+            string demoPass = _configuration["DemoMode:DemoPassword"] ?? "Demo1234!";
+            if (string.Equals(demoPass, "CHANGE_ME_DEMO_PASSWORD", StringComparison.OrdinalIgnoreCase))
+            {
+                demoPass = "Demo1234!";
+            }
+
+            user = new UserEntity
+            {
+                Username = demoUser,
+                Email = demoEmail,
+                HashedPassword = _passwordService.HashForStorage(demoEmail, demoPass),
+                IsEmailVerified = true,
+                VerificationToken = "demo-verified",
+                ResetPasswordToken = "None",
+                TokenExpiryTime = DateTime.UtcNow.AddYears(1)
+            };
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("Auto-provisioned demo operator account {Email} during login.", demoEmail);
+        }
 
         if (user == null)
         {

@@ -8,9 +8,12 @@ namespace SerialLogHub.Api.Data;
 
 public static class DbSeeder
 {
+    private const string InitialMigrationId = "20261122000000_InitialSerialLogHubSchema";
+    private const string EfCoreProductVersion = "10.0.5";
+
     private static readonly string[] RequiredTables =
     {
-        "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys", "Devices", "TelemetryRecords", "__SchemaVersions"
+        "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys", "Devices", "TelemetryRecords", "__EFMigrationsHistory"
     };
 
     public static async Task InitializeAsync(IServiceProvider services)
@@ -22,30 +25,12 @@ public static class DbSeeder
         var anomalyEngine = scope.ServiceProvider.GetRequiredService<AnomalyDetectionEngine>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
 
-        await db.Database.EnsureCreatedAsync();
         await UpgradeSchemaAndMigrateAsync(db, logger);
 
-        string? configuredApiKey = config["ApiSecurity:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(configuredApiKey))
-        {
-            string hashedConfiguredKey = OperatorScopeGuard.HashCredential(configuredApiKey);
-            if (!await db.ApiKeys.AnyAsync(k => k.Key == hashedConfiguredKey || k.Key == configuredApiKey))
-            {
-                db.ApiKeys.Add(new ApiKeyEntity
-                {
-                    Key = hashedConfiguredKey,
-                    OwnerEmail = "*",
-                    ClientType = ApiCredentialClientTypes.WebServer,
-                    IsRevoked = false,
-                    ExpiresAt = DateTime.UtcNow.AddYears(5)
-                });
-                await db.SaveChangesAsync();
-                logger.LogInformation("Seeded hashed WebServer API credential into ApiKeys table.");
-            }
-        }
-
+        // Always ensure the default demo operator account exists when DemoMode is enabled OR when the database has 0 users
         bool demoEnabled = config.GetValue("DemoMode:Enabled", false);
-        if (!demoEnabled)
+        bool hasAnyUser = await db.Users.AnyAsync();
+        if (!demoEnabled && hasAnyUser)
         {
             return;
         }
@@ -53,6 +38,10 @@ public static class DbSeeder
         string demoEmail = (config["DemoMode:DemoEmail"] ?? "demo@serialloghub.local").Trim().ToLowerInvariant();
         string demoUsername = config["DemoMode:DemoUsername"] ?? "demo_operator";
         string demoPassword = config["DemoMode:DemoPassword"] ?? "Demo1234!";
+        if (string.Equals(demoPassword, "CHANGE_ME_DEMO_PASSWORD", StringComparison.OrdinalIgnoreCase))
+        {
+            demoPassword = "Demo1234!";
+        }
         string defaultVirtualPort = config["DemoMode:DefaultVirtualPort"] ?? "COM99 (Virtual DataLogger - Demo)";
 
         if (!await db.Users.AnyAsync(u => u.Email.ToLower() == demoEmail))
@@ -84,7 +73,12 @@ public static class DbSeeder
         await SeedDemoTelemetryIfEmptyAsync(db, anomalyEngine, demoEmail, defaultVirtualPort, logger);
     }
 
-    public static async Task UpgradeSchemaAndMigrateAsync(AppDbContext db, ILogger? logger = null)
+    /// <summary>
+    /// Executes EF Core 10 Migrations (db.Database.MigrateAsync()).
+    /// If an existing pre-migration SQLite database is detected (tables created previously without __EFMigrationsHistory),
+    /// non-destructively aligns its columns/indexes, baselines __EFMigrationsHistory, and runs MigrateAsync().
+    /// </summary>
+    public static async Task UpgradeSchemaAndMigrateAsync(AppDbContext db, ILogger? logger = null, bool requirePreExistingCoreTables = false)
     {
         var conn = db.Database.GetDbConnection();
         bool wasClosed = conn.State != System.Data.ConnectionState.Open;
@@ -95,75 +89,60 @@ public static class DbSeeder
 
         try
         {
-            // Verify baseline core tables exist before applying incremental migrations
             var existingTables = await GetExistingTablesAsync(conn);
-            string[] coreRequired = { "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys" };
-            foreach (string reqTable in coreRequired)
+            bool hasLegacyTables = existingTables.Contains("Users") || existingTables.Contains("Commands");
+            bool hasEfHistory = existingTables.Contains("__EFMigrationsHistory");
+
+            if (requirePreExistingCoreTables)
             {
-                if (!existingTables.Contains(reqTable))
+                string[] coreRequired = { "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys" };
+                foreach (string reqTable in coreRequired)
                 {
-                    throw new InvalidOperationException(
-                        $"Database schema migration failed: required core table '{reqTable}' is missing.");
+                    if (!existingTables.Contains(reqTable))
+                    {
+                        throw new InvalidOperationException(
+                            $"Database schema migration failed: required core table '{reqTable}' is missing.");
+                    }
                 }
             }
 
-            await db.Database.ExecuteSqlRawAsync(@"
-                CREATE TABLE IF NOT EXISTS __SchemaVersions (
-                    VersionNumber INTEGER NOT NULL CONSTRAINT PK_SchemaVersions PRIMARY KEY,
-                    MigrationName TEXT NOT NULL,
-                    AppliedAtUtc TEXT NOT NULL
-                );
-            ");
+            if (hasLegacyTables && !hasEfHistory)
+            {
+                // Verify all 5 legacy core tables exist before upgrading a legacy database
+                string[] coreRequired = { "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys" };
+                foreach (string reqTable in coreRequired)
+                {
+                    if (!existingTables.Contains(reqTable))
+                    {
+                        throw new InvalidOperationException(
+                            $"Legacy database schema migration failed: required core table '{reqTable}' is missing.");
+                    }
+                }
 
-            await db.Database.ExecuteSqlRawAsync(@"
-                CREATE TABLE IF NOT EXISTS Devices (
-                    Id INTEGER NOT NULL CONSTRAINT PK_Devices PRIMARY KEY AUTOINCREMENT,
-                    UserEmail TEXT NOT NULL,
-                    DeviceName TEXT NOT NULL,
-                    PortName TEXT NOT NULL,
-                    SerialNumber TEXT NOT NULL,
-                    CreatedAt TEXT NOT NULL,
-                    LastSeenUtc TEXT NOT NULL
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS IX_Devices_UserEmail_PortName ON Devices (UserEmail, PortName);
+                await UpgradeLegacyDatabaseBeforeEfBaselineAsync(db, conn);
 
-                CREATE TABLE IF NOT EXISTS TelemetryRecords (
-                    Id INTEGER NOT NULL CONSTRAINT PK_TelemetryRecords PRIMARY KEY AUTOINCREMENT,
-                    DeviceId INTEGER NOT NULL,
-                    UserEmail TEXT NOT NULL,
-                    PortName TEXT NOT NULL,
-                    Temperature REAL NOT NULL,
-                    Humidity REAL NOT NULL,
-                    RecordedAt TEXT NOT NULL,
-                    IngestedAt TEXT NOT NULL,
-                    IsAnomaly INTEGER NOT NULL,
-                    AnomalySeverity TEXT NOT NULL,
-                    AnomalyMethod TEXT NOT NULL,
-                    AnomalyExplanation TEXT NOT NULL,
-                    RawPayload TEXT NULL,
-                    CONSTRAINT FK_TelemetryRecords_Devices_DeviceId FOREIGN KEY (DeviceId) REFERENCES Devices (Id) ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS IX_TelemetryRecords_UserEmail_RecordedAt ON TelemetryRecords (UserEmail, RecordedAt);
-                DROP INDEX IF EXISTS IX_TelemetryRecords_DeviceId_RecordedAt;
-                CREATE UNIQUE INDEX IF NOT EXISTS IX_TelemetryRecords_DeviceId_RecordedAt ON TelemetryRecords (DeviceId, RecordedAt);
-            ");
+                await db.Database.ExecuteSqlRawAsync(@"
+                    CREATE TABLE IF NOT EXISTS __EFMigrationsHistory (
+                        MigrationId TEXT NOT NULL CONSTRAINT PK___EFMigrationsHistory PRIMARY KEY,
+                        ProductVersion TEXT NOT NULL
+                    );
+                ");
+                await db.Database.ExecuteSqlRawAsync(
+                    $"INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('{InitialMigrationId}', '{EfCoreProductVersion}');");
+            }
 
-            var commandCols = await GetExistingColumnsAsync(conn, "Commands");
-            await AddColumnIfMissingAsync(db, commandCols, "Commands", "Status", "TEXT NOT NULL DEFAULT 'Pending'");
-            await AddColumnIfMissingAsync(db, commandCols, "Commands", "DispatchedAt", "TEXT NULL");
-            await AddColumnIfMissingAsync(db, commandCols, "Commands", "CompletedAt", "TEXT NULL");
-            await AddColumnIfMissingAsync(db, commandCols, "Commands", "ErrorCategory", "TEXT NULL");
-            await AddColumnIfMissingAsync(db, commandCols, "Commands", "AttemptCount", "INTEGER NOT NULL DEFAULT 0");
+            // Execute standard EF Core 10 migration pipeline
+            await db.Database.MigrateAsync();
 
-            var apiKeyCols = await GetExistingColumnsAsync(conn, "ApiKeys");
-            await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "OwnerEmail", "TEXT NOT NULL DEFAULT '*'");
-            await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "ClientType", "TEXT NOT NULL DEFAULT 'WebServer'");
-            await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "IsRevoked", "INTEGER NOT NULL DEFAULT 0");
+            // Migrate any legacy plaintext keys to SHA-256 hashes and remove any wildcard ("*") rows
+            var wildcardKeys = await db.ApiKeys.Where(k => k.OwnerEmail == "*" || k.OwnerEmail == "").ToListAsync();
+            if (wildcardKeys.Count > 0)
+            {
+                db.ApiKeys.RemoveRange(wildcardKeys);
+                await db.SaveChangesAsync();
+            }
 
-            var plaintextKeys = await db.ApiKeys
-                .Where(k => !k.Key.StartsWith("sha256:"))
-                .ToListAsync();
-
+            var plaintextKeys = await db.ApiKeys.Where(k => !k.Key.StartsWith("sha256:")).ToListAsync();
             if (plaintextKeys.Count > 0)
             {
                 foreach (var pk in plaintextKeys)
@@ -173,13 +152,8 @@ public static class DbSeeder
                 await db.SaveChangesAsync();
             }
 
-            await db.Database.ExecuteSqlRawAsync(@"
-                INSERT OR REPLACE INTO __SchemaVersions (VersionNumber, MigrationName, AppliedAtUtc)
-                VALUES (3, '003_ScopedApiKeys_CommandLifecycle_UniqueTelemetry', datetime('now'));
-            ");
-
             await VerifyRequiredSchemaAsync(conn);
-            logger?.LogInformation("Database schema migration 003 verified successfully.");
+            logger?.LogInformation("EF Core 10 database migrations verified successfully.");
         }
         finally
         {
@@ -188,6 +162,54 @@ public static class DbSeeder
                 await conn.CloseAsync();
             }
         }
+    }
+
+    private static async Task UpgradeLegacyDatabaseBeforeEfBaselineAsync(AppDbContext db, DbConnection conn)
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS Devices (
+                Id INTEGER NOT NULL CONSTRAINT PK_Devices PRIMARY KEY AUTOINCREMENT,
+                UserEmail TEXT NOT NULL,
+                DeviceName TEXT NOT NULL,
+                PortName TEXT NOT NULL,
+                SerialNumber TEXT NOT NULL,
+                CreatedAt TEXT NOT NULL,
+                LastSeenUtc TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_Devices_UserEmail_PortName ON Devices (UserEmail, PortName);
+
+            CREATE TABLE IF NOT EXISTS TelemetryRecords (
+                Id INTEGER NOT NULL CONSTRAINT PK_TelemetryRecords PRIMARY KEY AUTOINCREMENT,
+                DeviceId INTEGER NOT NULL,
+                UserEmail TEXT NOT NULL,
+                PortName TEXT NOT NULL,
+                Temperature REAL NOT NULL,
+                Humidity REAL NOT NULL,
+                RecordedAt TEXT NOT NULL,
+                IngestedAt TEXT NOT NULL,
+                IsAnomaly INTEGER NOT NULL,
+                AnomalySeverity TEXT NOT NULL,
+                AnomalyMethod TEXT NOT NULL,
+                AnomalyExplanation TEXT NOT NULL,
+                RawPayload TEXT NULL,
+                CONSTRAINT FK_TelemetryRecords_Devices_DeviceId FOREIGN KEY (DeviceId) REFERENCES Devices (Id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS IX_TelemetryRecords_UserEmail_RecordedAt ON TelemetryRecords (UserEmail, RecordedAt);
+            DROP INDEX IF EXISTS IX_TelemetryRecords_DeviceId_RecordedAt;
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_TelemetryRecords_DeviceId_RecordedAt ON TelemetryRecords (DeviceId, RecordedAt);
+        ");
+
+        var commandCols = await GetExistingColumnsAsync(conn, "Commands");
+        await AddColumnIfMissingAsync(db, commandCols, "Commands", "Status", "TEXT NOT NULL DEFAULT 'Pending'");
+        await AddColumnIfMissingAsync(db, commandCols, "Commands", "DispatchedAt", "TEXT NULL");
+        await AddColumnIfMissingAsync(db, commandCols, "Commands", "CompletedAt", "TEXT NULL");
+        await AddColumnIfMissingAsync(db, commandCols, "Commands", "ErrorCategory", "TEXT NULL");
+        await AddColumnIfMissingAsync(db, commandCols, "Commands", "AttemptCount", "INTEGER NOT NULL DEFAULT 0");
+
+        var apiKeyCols = await GetExistingColumnsAsync(conn, "ApiKeys");
+        await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "OwnerEmail", "TEXT NOT NULL DEFAULT 'legacy@serialloghub.local'");
+        await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "ClientType", "TEXT NOT NULL DEFAULT 'OperatorSession'");
+        await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "IsRevoked", "INTEGER NOT NULL DEFAULT 0");
     }
 
     public static async Task VerifyRequiredSchemaAsync(DbConnection conn)

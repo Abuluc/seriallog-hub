@@ -47,13 +47,12 @@ public class ApiKeyMiddleware
 
         string providedKey = extractedKey.ToString().Trim();
         string? configuredKey = _configuration["ApiSecurity:ApiKey"];
+        string providedHash = OperatorScopeGuard.HashCredential(providedKey);
 
-        var dbKeys = await dbContext.ApiKeys
+        // 1. Direct indexed O(1) SQL lookup by SHA-256 hash (never loads all ApiKeys into memory)
+        ApiKeyEntity? matchedDbKey = await dbContext.ApiKeys
             .AsNoTracking()
-            .ToListAsync();
-
-        ApiKeyEntity? matchedDbKey = dbKeys.FirstOrDefault(k =>
-            OperatorScopeGuard.VerifyHashedOrPlainCredential(providedKey, k.Key));
+            .FirstOrDefaultAsync(k => k.Key == providedHash);
 
         if (matchedDbKey != null)
         {
@@ -65,10 +64,15 @@ public class ApiKeyMiddleware
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(matchedDbKey.OwnerEmail) && matchedDbKey.OwnerEmail != "*")
+            if (string.IsNullOrWhiteSpace(matchedDbKey.OwnerEmail) || matchedDbKey.OwnerEmail == "*")
             {
-                OperatorScopeGuard.SetAuthenticatedOperator(context, matchedDbKey.OwnerEmail, matchedDbKey.ClientType);
+                _logger.LogWarning("Rejected ownerless or wildcard API key (Id={KeyId}) on {Path}.", matchedDbKey.Id, path);
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("API credential lacks an explicit operator owner.");
+                return;
             }
+
+            OperatorScopeGuard.SetAuthenticatedOperator(context, matchedDbKey.OwnerEmail, matchedDbKey.ClientType);
         }
         else
         {
@@ -82,12 +86,15 @@ public class ApiKeyMiddleware
             }
         }
 
+        // 2. Direct indexed O(1) SQL lookup for X-OPERATOR-TOKEN if supplied
         if (context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorTokenHeaderName, out var opTokenHeader) &&
             !string.IsNullOrWhiteSpace(opTokenHeader))
         {
             string rawToken = opTokenHeader.ToString().Trim();
-            ApiKeyEntity? matchedToken = dbKeys.FirstOrDefault(k =>
-                OperatorScopeGuard.VerifyHashedOrPlainCredential(rawToken, k.Key));
+            string tokenHash = OperatorScopeGuard.HashCredential(rawToken);
+            ApiKeyEntity? matchedToken = await dbContext.ApiKeys
+                .AsNoTracking()
+                .FirstOrDefaultAsync(k => k.Key == tokenHash);
 
             if (matchedToken == null || matchedToken.IsRevoked || matchedToken.ExpiresAt <= DateTime.UtcNow)
             {
@@ -97,18 +104,24 @@ public class ApiKeyMiddleware
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(matchedToken.OwnerEmail) && matchedToken.OwnerEmail != "*")
+            if (string.IsNullOrWhiteSpace(matchedToken.OwnerEmail) || matchedToken.OwnerEmail == "*")
             {
-                OperatorScopeGuard.SetAuthenticatedOperator(context, matchedToken.OwnerEmail, matchedToken.ClientType);
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("Operator token lacks a valid owner.");
+                return;
             }
+
+            OperatorScopeGuard.SetAuthenticatedOperator(context, matchedToken.OwnerEmail, matchedToken.ClientType);
         }
+        // 3. Or validate HMAC proof signed with the dedicated WebProxySigningSecret (NEVER the shared ApiKey)
         else if (context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorEmailHeaderName, out var emailHeader) &&
                  context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorTimestampHeaderName, out var tsHeader) &&
                  context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorProofHeaderName, out var proofHeader))
         {
             string assertedEmail = emailHeader.ToString().Trim().ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(configuredKey) ||
-                !OperatorScopeGuard.VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), configuredKey))
+            string? webProxySecret = OperatorScopeGuard.ResolveDistinctWebProxySigningSecret(_configuration);
+            if (string.IsNullOrWhiteSpace(webProxySecret) ||
+                !OperatorScopeGuard.VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), webProxySecret))
             {
                 _logger.LogWarning("Rejected invalid HMAC operator proof for {Email} on {Path}.", assertedEmail, path);
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -126,7 +139,7 @@ public class ApiKeyMiddleware
                 return;
             }
 
-            OperatorScopeGuard.SetAuthenticatedOperator(context, assertedEmail, ApiCredentialClientTypes.WebServer);
+            OperatorScopeGuard.SetAuthenticatedOperator(context, assertedEmail, "WebServerProxy");
         }
 
         await _next(context);

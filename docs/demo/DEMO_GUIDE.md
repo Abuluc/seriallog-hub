@@ -2,7 +2,7 @@
 
 ## Hosting Options for Live Demo
 
-Both `SerialLogHub.Api` and `SerialLogHub.Web` are containerized **.NET 8** applications ready for HTTPS cloud deployment using `deployment/Dockerfile.api` and `deployment/Dockerfile.web`.
+Both `SerialLogHub.Api` and `SerialLogHub.Web` are containerized **.NET 10 LTS** applications ready for HTTPS cloud deployment using `deployment/Dockerfile.api` and `deployment/Dockerfile.web`.
 
 | Hosting Provider | Free / Low-Cost Tier | HTTPS | Persistent SQLite | Notes |
 | :--- | :--- | :---: | :---: | :--- |

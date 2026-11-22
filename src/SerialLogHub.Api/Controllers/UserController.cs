@@ -390,21 +390,27 @@ public class UserController : ControllerBase
                 device.LastSeenUtc = DateTime.UtcNow;
             }
 
-            DateTime minTs = samples[0].RecordedAt;
-            DateTime maxTs = samples[^1].RecordedAt;
+            var existingTimestamps = new HashSet<DateTime>();
+            foreach (var chunk in samples.Select(s => s.RecordedAt).Chunk(200))
+            {
+                var chunkDates = chunk.ToList();
+                var found = await _db.TelemetryRecords
+                    .AsNoTracking()
+                    .Where(r => r.DeviceId == device.Id && chunkDates.Contains(r.RecordedAt))
+                    .Select(r => r.RecordedAt)
+                    .ToListAsync();
 
-            var existingInWindow = (await _db.TelemetryRecords
-                .AsNoTracking()
-                .Where(r => r.DeviceId == device.Id && r.RecordedAt >= minTs && r.RecordedAt <= maxTs)
-                .Select(r => r.RecordedAt)
-                .ToListAsync())
-                .ToHashSet();
+                foreach (var ts in found)
+                {
+                    existingTimestamps.Add(ts);
+                }
+            }
 
             var evaluations = _anomalyEngine.EvaluateSeries(samples);
             for (int i = 0; i < samples.Count; i++)
             {
                 var s = samples[i];
-                if (!existingInWindow.Add(s.RecordedAt))
+                if (!existingTimestamps.Add(s.RecordedAt))
                 {
                     continue;
                 }

@@ -151,6 +151,7 @@ public class AuthController : ControllerBase
             }
 
             string normalizedEmail = identifier.Trim().ToLowerInvariant();
+            string? operatorToken = null;
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(result);
@@ -158,6 +159,11 @@ public class AuthController : ControllerBase
                     !string.IsNullOrWhiteSpace(emailProp.GetString()))
                 {
                     normalizedEmail = emailProp.GetString()!.Trim().ToLowerInvariant();
+                }
+                if (doc.RootElement.TryGetProperty("operatorToken", out var tokenProp) &&
+                    !string.IsNullOrWhiteSpace(tokenProp.GetString()))
+                {
+                    operatorToken = tokenProp.GetString()!.Trim();
                 }
             }
             catch
@@ -170,6 +176,11 @@ public class AuthController : ControllerBase
                 new(ClaimTypes.Name, normalizedEmail),
                 new(ClaimTypes.Email, normalizedEmail)
             };
+
+            if (!string.IsNullOrWhiteSpace(operatorToken))
+            {
+                claims.Add(new Claim("OperatorToken", operatorToken));
+            }
 
             var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
             var authProperties = new AuthenticationProperties

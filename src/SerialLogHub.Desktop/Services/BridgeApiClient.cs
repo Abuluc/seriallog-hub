@@ -64,15 +64,6 @@ public sealed class BridgeApiClient : IDisposable
         {
             req.Headers.Add("X-OPERATOR-TOKEN", _operatorToken);
         }
-        else if (!string.IsNullOrWhiteSpace(_apiKey))
-        {
-            long unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            byte[] hmac = HMACSHA256.HashData(
-                Encoding.UTF8.GetBytes(_apiKey),
-                Encoding.UTF8.GetBytes($"{cleanEmail}|{unixSeconds}"));
-            req.Headers.Add("X-OPERATOR-TIMESTAMP", unixSeconds.ToString());
-            req.Headers.Add("X-OPERATOR-PROOF", Convert.ToHexString(hmac).ToLowerInvariant());
-        }
     }
 
     public async Task<(bool Success, string Message)> LoginAsync(string email, string username, string password, CancellationToken ct = default)

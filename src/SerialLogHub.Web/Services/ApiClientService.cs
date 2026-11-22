@@ -17,12 +17,18 @@ public class ApiClientService
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ApiClientService> _logger;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
-    public ApiClientService(HttpClient httpClient, IConfiguration configuration, ILogger<ApiClientService> logger)
+    public ApiClientService(
+        HttpClient httpClient,
+        IConfiguration configuration,
+        ILogger<ApiClientService> logger,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _httpClient = httpClient;
         _configuration = configuration;
         _logger = logger;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     private HttpRequestMessage CreateScopedRequest(HttpMethod method, string relativeUri, string operatorEmail, HttpContent? content = null)
@@ -34,16 +40,28 @@ public class ApiClientService
         if (!string.IsNullOrWhiteSpace(operatorEmail))
         {
             string cleanEmail = operatorEmail.Trim().ToLowerInvariant();
-            long unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            string signingSecret = _configuration["ApiSettings:ApiKey"] ?? "dev-serialloghub-api-key";
-            string canonical = $"{cleanEmail}|{unixSeconds}";
-            byte[] hmac = System.Security.Cryptography.HMACSHA256.HashData(
-                Encoding.UTF8.GetBytes(signingSecret),
-                Encoding.UTF8.GetBytes(canonical));
-
             req.Headers.Add(OperatorEmailHeaderName, cleanEmail);
-            req.Headers.Add("X-OPERATOR-TIMESTAMP", unixSeconds.ToString());
-            req.Headers.Add("X-OPERATOR-PROOF", Convert.ToHexString(hmac).ToLowerInvariant());
+
+            // 1. Prefer the operator's database-bound session token from the encrypted auth cookie claim
+            string? claimToken = _httpContextAccessor?.HttpContext?.User?.FindFirst("OperatorToken")?.Value;
+            if (!string.IsNullOrWhiteSpace(claimToken))
+            {
+                req.Headers.Add("X-OPERATOR-TOKEN", claimToken.Trim());
+            }
+
+            // 2. Also sign with the dedicated WebProxySigningSecret (never the shared ApiKey) if configured
+            string? webProxySecret = _configuration["ApiSettings:WebProxySigningSecret"];
+            if (!string.IsNullOrWhiteSpace(webProxySecret))
+            {
+                long unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                string canonical = $"{cleanEmail}|{unixSeconds}";
+                byte[] hmac = System.Security.Cryptography.HMACSHA256.HashData(
+                    Encoding.UTF8.GetBytes(webProxySecret.Trim()),
+                    Encoding.UTF8.GetBytes(canonical));
+
+                req.Headers.Add("X-OPERATOR-TIMESTAMP", unixSeconds.ToString());
+                req.Headers.Add("X-OPERATOR-PROOF", Convert.ToHexString(hmac).ToLowerInvariant());
+            }
         }
         return req;
     }

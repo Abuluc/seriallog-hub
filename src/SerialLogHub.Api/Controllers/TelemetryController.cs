@@ -173,15 +173,24 @@ public class TelemetryController : ControllerBase
             }
         }
 
-        DateTime minTs = samples[0].RecordedAt;
-        DateTime maxTs = samples[^1].RecordedAt;
+        // 2. Discrete chunked timestamp lookup against UNIQUE (DeviceId, RecordedAt) index:
+        // Queries ONLY the exact incoming timestamps in chunks of 200 (WHERE DeviceId = @id AND RecordedAt IN (...)),
+        // never scanning or loading wide historical date ranges between minTs and maxTs.
+        var existingTimestamps = new HashSet<DateTime>();
+        foreach (var chunk in samples.Select(s => s.RecordedAt).Chunk(200))
+        {
+            var chunkDates = chunk.ToList();
+            var found = await _db.TelemetryRecords
+                .AsNoTracking()
+                .Where(r => r.DeviceId == device.Id && chunkDates.Contains(r.RecordedAt))
+                .Select(r => r.RecordedAt)
+                .ToListAsync();
 
-        var existingInWindow = (await _db.TelemetryRecords
-            .AsNoTracking()
-            .Where(r => r.DeviceId == device.Id && r.RecordedAt >= minTs && r.RecordedAt <= maxTs)
-            .Select(r => r.RecordedAt)
-            .ToListAsync())
-            .ToHashSet();
+            foreach (var ts in found)
+            {
+                existingTimestamps.Add(ts);
+            }
+        }
 
         var evaluations = _anomalyEngine.EvaluateSeries(samples, request.Config);
         var toInsert = new List<TelemetryRecordEntity>(samples.Count);
@@ -193,7 +202,7 @@ public class TelemetryController : ControllerBase
             var eval = evaluations[i];
             if (eval.IsAnomaly) anomalyCount++;
 
-            if (!existingInWindow.Add(s.RecordedAt))
+            if (!existingTimestamps.Add(s.RecordedAt))
             {
                 continue;
             }
@@ -215,15 +224,43 @@ public class TelemetryController : ControllerBase
             });
         }
 
+        int insertedCount = 0;
         if (toInsert.Count > 0)
         {
-            _db.TelemetryRecords.AddRange(toInsert);
+            try
+            {
+                _db.TelemetryRecords.AddRange(toInsert);
+                await _db.SaveChangesAsync();
+                insertedCount = toInsert.Count;
+            }
+            catch (DbUpdateException)
+            {
+                // Concurrent request inserted an overlapping timestamp; resolve conflicts per-row via UNIQUE constraint
+                _db.ChangeTracker.Clear();
+                foreach (var record in toInsert)
+                {
+                    bool existsNow = await _db.TelemetryRecords
+                        .AsNoTracking()
+                        .AnyAsync(r => r.DeviceId == record.DeviceId && r.RecordedAt == record.RecordedAt);
+                    if (!existsNow)
+                    {
+                        _db.TelemetryRecords.Add(record);
+                        try
+                        {
+                            await _db.SaveChangesAsync();
+                            insertedCount++;
+                        }
+                        catch (DbUpdateException)
+                        {
+                            _db.Entry(record).State = EntityState.Detached;
+                        }
+                    }
+                }
+            }
         }
 
-        await _db.SaveChangesAsync();
-
         _logger.LogInformation("Ingested {Inserted} new telemetry rows ({Anomalies} anomalies) for {Email} device {DeviceId}.",
-            toInsert.Count, anomalyCount, normalizedEmail, device.Id);
+            insertedCount, anomalyCount, normalizedEmail, device.Id);
 
         return Ok(new
         {
@@ -231,8 +268,8 @@ public class TelemetryController : ControllerBase
             deviceName = device.DeviceName,
             portName = device.PortName,
             totalEvaluated = samples.Count,
-            insertedCount = toInsert.Count,
-            duplicateSkippedCount = samples.Count - toInsert.Count,
+            insertedCount,
+            duplicateSkippedCount = samples.Count - insertedCount,
             anomalyCount,
             evaluations
         });
