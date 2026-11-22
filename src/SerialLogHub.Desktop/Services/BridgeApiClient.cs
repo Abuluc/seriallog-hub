@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -44,6 +45,14 @@ public sealed class BridgeApiClient : IDisposable
     {
         byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    public static bool IsPermanentHttpFailure(HttpStatusCode statusCode)
+    {
+        return statusCode is HttpStatusCode.Unauthorized
+            or HttpStatusCode.Forbidden
+            or HttpStatusCode.BadRequest
+            or HttpStatusCode.NotFound;
     }
 
     private void AttachOperatorCredentials(HttpRequestMessage req, string email)
@@ -134,6 +143,20 @@ public sealed class BridgeApiClient : IDisposable
 
     public async Task<bool> UpdateCommandResponseAsync(string email, string? commandId, string responseText, CancellationToken ct = default)
     {
+        var (success, _) = await UpdateCommandResponseDetailedAsync(email, commandId, responseText, ct);
+        return success;
+    }
+
+    /// <summary>
+    /// Reports a completed command response back to the API with bounded exponential backoff.
+    /// Does NOT retry permanent 400/401/403/404 validation or authorization failures.
+    /// </summary>
+    public async Task<(bool Success, bool IsPermanentFailure)> UpdateCommandResponseDetailedAsync(
+        string email,
+        string? commandId,
+        string responseText,
+        CancellationToken ct = default)
+    {
         string cleanEmail = email.Trim();
         var payload = new CommandUpdateRequest
         {
@@ -161,7 +184,12 @@ public sealed class BridgeApiClient : IDisposable
                 using var response = await _apiHttpClient.SendAsync(req, ct);
                 if (response.IsSuccessStatusCode)
                 {
-                    return true;
+                    return (true, false);
+                }
+
+                if (IsPermanentHttpFailure(response.StatusCode))
+                {
+                    return (false, true);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -170,11 +198,11 @@ public sealed class BridgeApiClient : IDisposable
             }
             catch
             {
-                // Retry on transient transport error
+                // Transient transport error — retry next backoff step
             }
         }
 
-        return false;
+        return (false, false);
     }
 
     public async Task<bool> SendWebHeartbeatAsync(string email, CancellationToken ct = default)

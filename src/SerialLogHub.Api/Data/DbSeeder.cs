@@ -8,6 +8,11 @@ namespace SerialLogHub.Api.Data;
 
 public static class DbSeeder
 {
+    private static readonly string[] RequiredTables =
+    {
+        "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys", "Devices", "TelemetryRecords", "__SchemaVersions"
+    };
+
     public static async Task InitializeAsync(IServiceProvider services)
     {
         using var scope = services.CreateScope();
@@ -20,21 +25,23 @@ public static class DbSeeder
         await db.Database.EnsureCreatedAsync();
         await UpgradeSchemaAndMigrateAsync(db, logger);
 
-        string configuredApiKey = config["ApiSecurity:ApiKey"] ?? "dev-serialloghub-api-key";
-        string hashedConfiguredKey = OperatorScopeGuard.HashCredential(configuredApiKey);
-
-        if (!await db.ApiKeys.AnyAsync(k => k.Key == hashedConfiguredKey || k.Key == configuredApiKey))
+        string? configuredApiKey = config["ApiSecurity:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(configuredApiKey))
         {
-            db.ApiKeys.Add(new ApiKeyEntity
+            string hashedConfiguredKey = OperatorScopeGuard.HashCredential(configuredApiKey);
+            if (!await db.ApiKeys.AnyAsync(k => k.Key == hashedConfiguredKey || k.Key == configuredApiKey))
             {
-                Key = hashedConfiguredKey,
-                OwnerEmail = "*",
-                ClientType = ApiCredentialClientTypes.WebServer,
-                IsRevoked = false,
-                ExpiresAt = DateTime.UtcNow.AddYears(5)
-            });
-            await db.SaveChangesAsync();
-            logger.LogInformation("Seeded hashed WebServer API credential into ApiKeys table.");
+                db.ApiKeys.Add(new ApiKeyEntity
+                {
+                    Key = hashedConfiguredKey,
+                    OwnerEmail = "*",
+                    ClientType = ApiCredentialClientTypes.WebServer,
+                    IsRevoked = false,
+                    ExpiresAt = DateTime.UtcNow.AddYears(5)
+                });
+                await db.SaveChangesAsync();
+                logger.LogInformation("Seeded hashed WebServer API credential into ApiKeys table.");
+            }
         }
 
         bool demoEnabled = config.GetValue("DemoMode:Enabled", false);
@@ -77,11 +84,6 @@ public static class DbSeeder
         await SeedDemoTelemetryIfEmptyAsync(db, anomalyEngine, demoEmail, defaultVirtualPort, logger);
     }
 
-    /// <summary>
-    /// Versioned, non-destructive SQLite schema migration runner that inspects actual table columns via
-    /// PRAGMA table_info(...) before altering tables, recording applied migrations in __SchemaVersions
-    /// without swallowing unexpected SQL failures.
-    /// </summary>
     public static async Task UpgradeSchemaAndMigrateAsync(AppDbContext db, ILogger? logger = null)
     {
         var conn = db.Database.GetDbConnection();
@@ -93,7 +95,18 @@ public static class DbSeeder
 
         try
         {
-            // 1. Ensure __SchemaVersions tracking table exists
+            // Verify baseline core tables exist before applying incremental migrations
+            var existingTables = await GetExistingTablesAsync(conn);
+            string[] coreRequired = { "Users", "UsersPort", "Commands", "CommandHistories", "ApiKeys" };
+            foreach (string reqTable in coreRequired)
+            {
+                if (!existingTables.Contains(reqTable))
+                {
+                    throw new InvalidOperationException(
+                        $"Database schema migration failed: required core table '{reqTable}' is missing.");
+                }
+            }
+
             await db.Database.ExecuteSqlRawAsync(@"
                 CREATE TABLE IF NOT EXISTS __SchemaVersions (
                     VersionNumber INTEGER NOT NULL CONSTRAINT PK_SchemaVersions PRIMARY KEY,
@@ -102,7 +115,6 @@ public static class DbSeeder
                 );
             ");
 
-            // 2. Migration 001: Devices & TelemetryRecords with Unique (DeviceId, RecordedAt) Index
             await db.Database.ExecuteSqlRawAsync(@"
                 CREATE TABLE IF NOT EXISTS Devices (
                     Id INTEGER NOT NULL CONSTRAINT PK_Devices PRIMARY KEY AUTOINCREMENT,
@@ -136,7 +148,6 @@ public static class DbSeeder
                 CREATE UNIQUE INDEX IF NOT EXISTS IX_TelemetryRecords_DeviceId_RecordedAt ON TelemetryRecords (DeviceId, RecordedAt);
             ");
 
-            // 3. Migration 002: Command lifecycle columns on Commands (inspected via PRAGMA table_info)
             var commandCols = await GetExistingColumnsAsync(conn, "Commands");
             await AddColumnIfMissingAsync(db, commandCols, "Commands", "Status", "TEXT NOT NULL DEFAULT 'Pending'");
             await AddColumnIfMissingAsync(db, commandCols, "Commands", "DispatchedAt", "TEXT NULL");
@@ -144,13 +155,11 @@ public static class DbSeeder
             await AddColumnIfMissingAsync(db, commandCols, "Commands", "ErrorCategory", "TEXT NULL");
             await AddColumnIfMissingAsync(db, commandCols, "Commands", "AttemptCount", "INTEGER NOT NULL DEFAULT 0");
 
-            // 4. Migration 003: Scoped credential columns on ApiKeys (OwnerEmail, ClientType, IsRevoked)
             var apiKeyCols = await GetExistingColumnsAsync(conn, "ApiKeys");
             await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "OwnerEmail", "TEXT NOT NULL DEFAULT '*'");
             await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "ClientType", "TEXT NOT NULL DEFAULT 'WebServer'");
             await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "IsRevoked", "INTEGER NOT NULL DEFAULT 0");
 
-            // 5. Migrate any legacy plaintext keys in ApiKeys to SHA-256 hashes non-destructively
             var plaintextKeys = await db.ApiKeys
                 .Where(k => !k.Key.StartsWith("sha256:"))
                 .ToListAsync();
@@ -164,11 +173,13 @@ public static class DbSeeder
                 await db.SaveChangesAsync();
             }
 
-            // Record applied schema version 3
             await db.Database.ExecuteSqlRawAsync(@"
                 INSERT OR REPLACE INTO __SchemaVersions (VersionNumber, MigrationName, AppliedAtUtc)
                 VALUES (3, '003_ScopedApiKeys_CommandLifecycle_UniqueTelemetry', datetime('now'));
             ");
+
+            await VerifyRequiredSchemaAsync(conn);
+            logger?.LogInformation("Database schema migration 003 verified successfully.");
         }
         finally
         {
@@ -179,6 +190,31 @@ public static class DbSeeder
         }
     }
 
+    public static async Task VerifyRequiredSchemaAsync(DbConnection conn)
+    {
+        var tables = await GetExistingTablesAsync(conn);
+        foreach (string required in RequiredTables)
+        {
+            if (!tables.Contains(required))
+            {
+                throw new InvalidOperationException($"Post-migration verification failed: table '{required}' does not exist.");
+            }
+        }
+    }
+
+    private static async Task<HashSet<string>> GetExistingTablesAsync(DbConnection conn)
+    {
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table';";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            tables.Add(reader.GetString(0));
+        }
+        return tables;
+    }
+
     private static async Task<HashSet<string>> GetExistingColumnsAsync(DbConnection conn, string tableName)
     {
         var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -187,8 +223,7 @@ public static class DbSeeder
         using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            string colName = reader.GetString(1);
-            cols.Add(colName);
+            cols.Add(reader.GetString(1));
         }
         return cols;
     }

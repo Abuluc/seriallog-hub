@@ -107,6 +107,8 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+ProductionSecurityValidator.ValidateApiConfiguration(app.Configuration, app.Environment.IsProduction());
+
 await DbSeeder.InitializeAsync(app.Services);
 
 if (app.Environment.IsDevelopment())

@@ -27,7 +27,13 @@ public sealed class UserControllerTests : IDisposable
 
         _db = new AppDbContext(options);
         _db.Database.EnsureCreated();
-        _controller = new UserController(_db, NullLogger<UserController>.Instance);
+        _controller = new UserController(_db, NullLogger<UserController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = SerialLogHub.Api.Services.OperatorScopeGuard.CreateAuthenticatedContext("ops@example.com")
+            }
+        };
     }
 
     public void Dispose()

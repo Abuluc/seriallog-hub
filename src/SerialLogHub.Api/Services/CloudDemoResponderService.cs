@@ -93,6 +93,9 @@ public sealed class CloudDemoResponderService : BackgroundService
         {
             cmd.Response = BuildSimulatedResponse(cmd.Message);
             cmd.IsProcessed = true;
+            cmd.Status = CommandLifecycleStatus.Completed;
+            cmd.CompletedAt = DateTime.UtcNow;
+            cmd.ErrorCategory = "None";
 
             db.CommandHistories.Add(new CommandHistoryEntity
             {

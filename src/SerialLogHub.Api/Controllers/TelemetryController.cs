@@ -29,7 +29,7 @@ public sealed class TelemetryAnalyzeRequest
 public class TelemetryController : ControllerBase
 {
     public const int MaxSamplesPerIngest = 5000;
-    public const int MaxRawPayloadCharacters = 2 * 1024 * 1024; // 2 MB string bound
+    public const int MaxRawPayloadCharacters = 2 * 1024 * 1024;
 
     private readonly AppDbContext _db;
     private readonly AnomalyDetectionEngine _anomalyEngine;
@@ -123,7 +123,24 @@ public class TelemetryController : ControllerBase
             return BadRequest($"Ingestion batch of {rawSamples.Count} samples exceeds the maximum limit of {MaxSamplesPerIngest} samples per request.");
         }
 
-        // 1. In-batch deduplication and chronological ordering
+        // Validate timestamp bounds (-10 years to +2 hours from UTC now) and numeric sanity
+        DateTime minAllowedUtc = DateTime.UtcNow.AddYears(-10);
+        DateTime maxAllowedUtc = DateTime.UtcNow.AddHours(2);
+
+        foreach (var sample in rawSamples)
+        {
+            if (sample.RecordedAt == default || sample.RecordedAt < minAllowedUtc || sample.RecordedAt > maxAllowedUtc)
+            {
+                return BadRequest("One or more telemetry samples contain invalid, extremely old (>10y), or future (>2h) timestamps.");
+            }
+
+            if (double.IsNaN(sample.Temperature) || double.IsInfinity(sample.Temperature) ||
+                double.IsNaN(sample.Humidity) || double.IsInfinity(sample.Humidity))
+            {
+                return BadRequest("Telemetry samples cannot contain NaN or Infinity values.");
+            }
+        }
+
         var samples = rawSamples
             .GroupBy(s => s.RecordedAt)
             .Select(g => g.First())
@@ -156,8 +173,6 @@ public class TelemetryController : ControllerBase
             }
         }
 
-        // 2. Bounded time-window lookup: query ONLY existing timestamps within [minTs, maxTs] of the incoming batch
-        // using the composite unique index IX_TelemetryRecords_DeviceId_RecordedAt (never loading full device history!)
         DateTime minTs = samples[0].RecordedAt;
         DateTime maxTs = samples[^1].RecordedAt;
 
@@ -217,6 +232,7 @@ public class TelemetryController : ControllerBase
             portName = device.PortName,
             totalEvaluated = samples.Count,
             insertedCount = toInsert.Count,
+            duplicateSkippedCount = samples.Count - toInsert.Count,
             anomalyCount,
             evaluations
         });
@@ -235,6 +251,16 @@ public class TelemetryController : ControllerBase
         if (string.IsNullOrWhiteSpace(email))
         {
             return BadRequest("Email is required.");
+        }
+
+        if (fromUtc.HasValue && toUtc.HasValue && fromUtc.Value > toUtc.Value)
+        {
+            return BadRequest("fromUtc cannot be greater than toUtc.");
+        }
+
+        if (deviceId.HasValue && deviceId.Value <= 0)
+        {
+            return BadRequest("Invalid deviceId.");
         }
 
         var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
@@ -273,7 +299,7 @@ public class TelemetryController : ControllerBase
         }
 
         int totalCount = await query.CountAsync();
-        int anomalyCount = await query.CountAsync(r => r.IsAnomaly);
+        int anomalyCount = totalCount > 0 ? await query.CountAsync(r => r.IsAnomaly) : 0;
 
         var records = await query
             .OrderBy(r => r.RecordedAt)
@@ -316,11 +342,23 @@ public class TelemetryController : ControllerBase
     public async Task<IActionResult> CompareDevices(
         [FromQuery] string email,
         [FromQuery] int deviceA,
-        [FromQuery] int deviceB)
+        [FromQuery] int deviceB,
+        [FromQuery] DateTime? fromUtc = null,
+        [FromQuery] DateTime? toUtc = null)
     {
         if (string.IsNullOrWhiteSpace(email))
         {
             return BadRequest("Email is required.");
+        }
+
+        if (deviceA <= 0 || deviceB <= 0)
+        {
+            return BadRequest("Valid positive device identifiers are required.");
+        }
+
+        if (fromUtc.HasValue && toUtc.HasValue && fromUtc.Value > toUtc.Value)
+        {
+            return BadRequest("fromUtc cannot be greater than toUtc.");
         }
 
         var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
@@ -338,15 +376,33 @@ public class TelemetryController : ControllerBase
             return NotFound("One or both devices were not found for this operator.");
         }
 
-        async Task<object> BuildSummaryAsync(DeviceEntity dev)
+        // Database-side SQL aggregation (never loads entire telemetry histories into memory)
+        async Task<object> BuildSummarySqlAsync(DeviceEntity dev)
         {
-            var rows = await _db.TelemetryRecords
+            var q = _db.TelemetryRecords
                 .AsNoTracking()
-                .Where(r => r.DeviceId == dev.Id)
-                .ToListAsync();
+                .Where(r => r.DeviceId == dev.Id);
 
-            int count = rows.Count;
-            int anomalies = rows.Count(r => r.IsAnomaly);
+            if (fromUtc.HasValue) q = q.Where(r => r.RecordedAt >= fromUtc.Value);
+            if (toUtc.HasValue) q = q.Where(r => r.RecordedAt <= toUtc.Value);
+
+            var agg = await q
+                .GroupBy(_ => 1)
+                .Select(g => new
+                {
+                    SampleCount = g.Count(),
+                    AnomalyCount = g.Count(r => r.IsAnomaly),
+                    MinTemp = g.Min(r => r.Temperature),
+                    AvgTemp = g.Average(r => r.Temperature),
+                    MaxTemp = g.Max(r => r.Temperature),
+                    MinHum = g.Min(r => r.Humidity),
+                    AvgHum = g.Average(r => r.Humidity),
+                    MaxHum = g.Max(r => r.Humidity)
+                })
+                .FirstOrDefaultAsync();
+
+            int count = agg?.SampleCount ?? 0;
+            int anomalies = agg?.AnomalyCount ?? 0;
             return new
             {
                 deviceId = dev.Id,
@@ -356,19 +412,19 @@ public class TelemetryController : ControllerBase
                 sampleCount = count,
                 anomalyCount = anomalies,
                 anomalyRatePercent = count > 0 ? Math.Round((anomalies * 100.0) / count, 2) : 0,
-                minTemp = count > 0 ? rows.Min(r => r.Temperature) : 0,
-                avgTemp = count > 0 ? Math.Round(rows.Average(r => r.Temperature), 2) : 0,
-                maxTemp = count > 0 ? rows.Max(r => r.Temperature) : 0,
-                minHum = count > 0 ? rows.Min(r => r.Humidity) : 0,
-                avgHum = count > 0 ? Math.Round(rows.Average(r => r.Humidity), 2) : 0,
-                maxHum = count > 0 ? rows.Max(r => r.Humidity) : 0
+                minTemp = count > 0 ? agg!.MinTemp : 0,
+                avgTemp = count > 0 ? Math.Round(agg!.AvgTemp, 2) : 0,
+                maxTemp = count > 0 ? agg!.MaxTemp : 0,
+                minHum = count > 0 ? agg!.MinHum : 0,
+                avgHum = count > 0 ? Math.Round(agg!.AvgHum, 2) : 0,
+                maxHum = count > 0 ? agg!.MaxHum : 0
             };
         }
 
         return Ok(new
         {
-            deviceA = await BuildSummaryAsync(devA),
-            deviceB = await BuildSummaryAsync(devB)
+            deviceA = await BuildSummarySqlAsync(devA),
+            deviceB = await BuildSummarySqlAsync(devB)
         });
     }
 

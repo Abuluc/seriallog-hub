@@ -47,9 +47,7 @@ public class ApiKeyMiddleware
 
         string providedKey = extractedKey.ToString().Trim();
         string? configuredKey = _configuration["ApiSecurity:ApiKey"];
-        string providedHash = OperatorScopeGuard.HashCredential(providedKey);
 
-        // 1. Check database credentials first (supports scoped operator keys, expiration, and revocation)
         var dbKeys = await dbContext.ApiKeys
             .AsNoTracking()
             .ToListAsync();
@@ -67,7 +65,6 @@ public class ApiKeyMiddleware
                 return;
             }
 
-            // If this API credential is scoped to a specific operator (e.g. DesktopBridge / OperatorSession), bind it on HttpContext
             if (!string.IsNullOrWhiteSpace(matchedDbKey.OwnerEmail) && matchedDbKey.OwnerEmail != "*")
             {
                 OperatorScopeGuard.SetAuthenticatedOperator(context, matchedDbKey.OwnerEmail, matchedDbKey.ClientType);
@@ -85,7 +82,6 @@ public class ApiKeyMiddleware
             }
         }
 
-        // 2. Also validate X-OPERATOR-TOKEN if supplied alongside the base API key
         if (context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorTokenHeaderName, out var opTokenHeader) &&
             !string.IsNullOrWhiteSpace(opTokenHeader))
         {
@@ -106,14 +102,13 @@ public class ApiKeyMiddleware
                 OperatorScopeGuard.SetAuthenticatedOperator(context, matchedToken.OwnerEmail, matchedToken.ClientType);
             }
         }
-        // 3. Or validate cryptographic HMAC proof (X-OPERATOR-EMAIL + X-OPERATOR-TIMESTAMP + X-OPERATOR-PROOF) from WebServer/Bridge
         else if (context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorEmailHeaderName, out var emailHeader) &&
                  context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorTimestampHeaderName, out var tsHeader) &&
                  context.Request.Headers.TryGetValue(OperatorScopeGuard.OperatorProofHeaderName, out var proofHeader))
         {
             string assertedEmail = emailHeader.ToString().Trim().ToLowerInvariant();
-            string signingSecret = configuredKey ?? "dev-serialloghub-api-key";
-            if (!OperatorScopeGuard.VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), signingSecret))
+            if (string.IsNullOrWhiteSpace(configuredKey) ||
+                !OperatorScopeGuard.VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), configuredKey))
             {
                 _logger.LogWarning("Rejected invalid HMAC operator proof for {Email} on {Path}.", assertedEmail, path);
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -121,7 +116,6 @@ public class ApiKeyMiddleware
                 return;
             }
 
-            // If the API key itself was already bound to a different operator, block impersonation!
             if (context.Items.TryGetValue(OperatorScopeGuard.ContextOperatorEmailKey, out var existingOwner) &&
                 existingOwner is string boundOwner &&
                 !string.Equals(boundOwner, assertedEmail, StringComparison.OrdinalIgnoreCase))

@@ -94,4 +94,23 @@ public sealed class WebLayerTests
         string json = JsonSerializer.Serialize(result.Value);
         Assert.Contains("\"status\":\"Error\"", json);
     }
+
+    [Fact]
+    public void NotificationHub_EnforcesAuthorizeAttribute_AndIsolatesOperatorAndDeviceGroups()
+    {
+        var authorizeAttr = typeof(SerialLogHub.Web.Hubs.NotificationHub)
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), inherit: true);
+        Assert.NotEmpty(authorizeAttr);
+
+        string aliceUserGroup = SerialLogHub.Web.Hubs.NotificationHub.GetUserGroupName("Alice@Example.com ");
+        string bobUserGroup = SerialLogHub.Web.Hubs.NotificationHub.GetUserGroupName("bob@example.com");
+        Assert.Equal("user:alice@example.com", aliceUserGroup);
+        Assert.NotEqual(aliceUserGroup, bobUserGroup);
+
+        string aliceDeviceGroup = SerialLogHub.Web.Hubs.NotificationHub.GetDeviceGroupName("alice@example.com", "com99");
+        string bobDeviceGroup = SerialLogHub.Web.Hubs.NotificationHub.GetDeviceGroupName("bob@example.com", "COM99");
+        Assert.Equal("device:alice@example.com:COM99", aliceDeviceGroup);
+        Assert.Equal("device:bob@example.com:COM99", bobDeviceGroup);
+        Assert.NotEqual(aliceDeviceGroup, bobDeviceGroup);
+    }
 }

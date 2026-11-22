@@ -85,7 +85,7 @@ public static class OperatorScopeGuard
         }
 
         long nowSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if (Math.Abs(nowSeconds - unixSeconds) > 300) // 5-minute replay window
+        if (Math.Abs(nowSeconds - unixSeconds) > 300)
         {
             return false;
         }
@@ -94,9 +94,6 @@ public static class OperatorScopeGuard
         return FixedTimeEquals(proofHeader.Trim().ToLowerInvariant(), expectedProof);
     }
 
-    /// <summary>
-    /// Helper for unit/integration tests to simulate an authenticated operator principal on HttpContext.
-    /// </summary>
     public static void SetAuthenticatedOperator(HttpContext httpContext, string operatorEmail, string clientType = "OperatorSession")
     {
         httpContext.Items[ContextOperatorEmailKey] = operatorEmail.Trim().ToLowerInvariant();
@@ -104,9 +101,16 @@ public static class OperatorScopeGuard
         httpContext.Items[ContextCredentialVerifiedKey] = true;
     }
 
+    public static DefaultHttpContext CreateAuthenticatedContext(string operatorEmail, string clientType = "OperatorSession")
+    {
+        var ctx = new DefaultHttpContext();
+        SetAuthenticatedOperator(ctx, operatorEmail, clientType);
+        return ctx;
+    }
+
     /// <summary>
     /// Authoritatively verifies that the caller is authenticated as targetEmail.
-    /// Never trusts a bare X-OPERATOR-EMAIL header by itself when security enforcement is active.
+    /// Strictly fail-closed: null HttpContext, missing identity, or unverified headers are always rejected.
     /// </summary>
     public static async Task<(bool IsAuthorized, int StatusCode, string ErrorMessage)> AuthorizeOperatorAsync(
         HttpContext? httpContext,
@@ -119,22 +123,21 @@ public static class OperatorScopeGuard
             return (false, StatusCodes.Status400BadRequest, "Target operator email is required.");
         }
 
-        string requestedEmail = targetEmail.Trim().ToLowerInvariant();
-
-        // Direct in-process C# unit tests that do not attach an HttpContext at all
+        // Fail closed when authentication context is null
         if (httpContext == null)
         {
-            return (true, StatusCodes.Status200OK, string.Empty);
+            return (false, StatusCodes.Status401Unauthorized, "Missing authentication context (fail-closed).");
         }
 
-        // 1. Check if ApiKeyMiddleware already established a cryptographically verified operator identity
+        string requestedEmail = targetEmail.Trim().ToLowerInvariant();
+
+        // 1. Check if ApiKeyMiddleware or server authentication already established a verified operator identity
         if (httpContext.Items.TryGetValue(ContextCredentialVerifiedKey, out var verifiedObj) &&
             verifiedObj is true &&
             httpContext.Items.TryGetValue(ContextOperatorEmailKey, out var boundEmailObj) &&
             boundEmailObj is string boundEmail &&
             !string.IsNullOrWhiteSpace(boundEmail))
         {
-            // If X-OPERATOR-EMAIL header was also sent, it must match the credential's bound email
             if (httpContext.Request.Headers.TryGetValue(OperatorEmailHeaderName, out var headerEmail) &&
                 !string.IsNullOrWhiteSpace(headerEmail) &&
                 !string.Equals(headerEmail.ToString().Trim(), boundEmail, StringComparison.OrdinalIgnoreCase))
@@ -202,7 +205,12 @@ public static class OperatorScopeGuard
             if (httpContext.Request.Headers.TryGetValue(OperatorTimestampHeaderName, out var tsHeader) &&
                 httpContext.Request.Headers.TryGetValue(OperatorProofHeaderName, out var proofHeader))
             {
-                string signingSecret = configuration?["ApiSecurity:ApiKey"] ?? "dev-serialloghub-api-key";
+                string? signingSecret = configuration?["ApiSecurity:ApiKey"];
+                if (string.IsNullOrWhiteSpace(signingSecret))
+                {
+                    return (false, StatusCodes.Status401Unauthorized, "Server signing secret is not configured.");
+                }
+
                 if (!VerifyOperatorHmacProof(assertedEmail, tsHeader.ToString(), proofHeader.ToString(), signingSecret))
                 {
                     return (false, StatusCodes.Status401Unauthorized, "Invalid or expired cryptographic operator proof.");
@@ -217,9 +225,6 @@ public static class OperatorScopeGuard
                 return (true, StatusCodes.Status200OK, string.Empty);
             }
 
-            // A bare X-OPERATOR-EMAIL header was supplied without a valid token or cryptographic proof:
-            // If it doesn't even match targetEmail, reject immediately with 403 Forbidden;
-            // If it matches targetEmail, still reject because a bare header is an unverified identity assertion!
             if (!string.Equals(assertedEmail, requestedEmail, StringComparison.OrdinalIgnoreCase))
             {
                 return (false, StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
@@ -228,8 +233,6 @@ public static class OperatorScopeGuard
             return (false, StatusCodes.Status401Unauthorized, "Unverified X-OPERATOR-EMAIL header: cryptographic operator token or HMAC proof is required.");
         }
 
-        // 4. If an HttpContext was explicitly attached (e.g. an HTTP request or security test with headers/enforcement)
-        // and X-OPERATOR-EMAIL / X-OPERATOR-TOKEN are completely missing, reject!
         return (false, StatusCodes.Status401Unauthorized, "Missing authenticated operator identity (X-OPERATOR-TOKEN or signed X-OPERATOR-EMAIL proof required).");
     }
 }

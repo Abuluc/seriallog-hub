@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build-test-audit:
     runs-on: windows-latest
@@ -34,7 +37,14 @@ jobs:
         run: dotnet build SerialLogHub.sln --configuration Release --no-restore
 
       - name: Run unit, integration, simulator & security tests
-        run: dotnet test SerialLogHub.sln --configuration Release --no-build --verbosity normal
+        run: dotnet test SerialLogHub.sln --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-trx
+          path: "**/TestResults/*.trx"
 
       - name: Audit NuGet dependencies for vulnerabilities
         run: dotnet list SerialLogHub.sln package --vulnerable --include-transitive

@@ -1,7 +1,7 @@
+using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -12,9 +12,9 @@ using SerialLogHub.Api.Entities;
 using SerialLogHub.Api.Middleware;
 using SerialLogHub.Api.Models;
 using SerialLogHub.Api.Services;
+using SerialLogHub.Desktop.Models;
 using SerialLogHub.Desktop.Services;
 using SerialLogHub.Web.Controllers;
-using SerialLogHub.Web.Hubs;
 using SerialLogHub.Web.Models;
 using SerialLogHub.Web.Services;
 using Xunit;
@@ -46,9 +46,9 @@ public sealed class TelemetryAndSecurityTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ApiSecurity:RequireApiKey"] = "true",
-                ["ApiSecurity:ApiKey"] = "test-master-api-key-secret",
+                ["ApiSecurity:ApiKey"] = "test-master-api-key-secret-value-256",
                 ["BridgeSecurity:RequireBridgeKey"] = "true",
-                ["BridgeSecurity:BridgeKey"] = "test-bridge-secret-key"
+                ["BridgeSecurity:BridgeKey"] = "test-bridge-secret-key-value-256"
             })
             .Build();
     }
@@ -60,9 +60,30 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task NegativeSecurity_NullHttpContext_FailsClosedWith401()
+    {
+        // Controller instantiated without any HttpContext (ControllerContext.HttpContext == null) MUST fail closed
+        var userController = new UserController(_db, NullLogger<UserController>.Instance, _anomalyEngine, _configuration);
+        var telemetryController = new TelemetryController(_db, _anomalyEngine, NullLogger<TelemetryController>.Instance, _configuration);
+
+        var portsRes = Assert.IsType<ObjectResult>(await userController.GetPorts("alice@example.com"));
+        Assert.Equal(StatusCodes.Status401Unauthorized, portsRes.StatusCode);
+
+        var cmdRes = Assert.IsType<ObjectResult>(await userController.SendCommand(new SendCommandRequest
+        {
+            Email = "alice@example.com",
+            SelectedPort = "COM99",
+            Message = "TEST"
+        }));
+        Assert.Equal(StatusCodes.Status401Unauthorized, cmdRes.StatusCode);
+
+        var telRes = Assert.IsType<ObjectResult>(await telemetryController.GetDevices("alice@example.com"));
+        Assert.Equal(StatusCodes.Status401Unauthorized, telRes.StatusCode);
+    }
+
+    [Fact]
     public async Task NegativeSecurity_MissingOperatorHeaders_AreRejectedWith401()
     {
-        // Attach a real HttpContext with NO X-OPERATOR-EMAIL and NO X-OPERATOR-TOKEN
         var httpContext = new DefaultHttpContext();
 
         var userController = new UserController(_db, NullLogger<UserController>.Instance, _anomalyEngine, _configuration)
@@ -95,8 +116,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     [Fact]
     public async Task NegativeSecurity_ForgedBareOperatorEmailHeader_IsRejectedEvenWhenMatchingTarget()
     {
-        // An attacker possessing a shared key sends a bare X-OPERATOR-EMAIL: victim@example.com
-        // without a valid server-issued X-OPERATOR-TOKEN or valid HMAC X-OPERATOR-PROOF
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "victim@example.com";
 
@@ -117,7 +136,7 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     }
 
     [Fact]
-    public async Task NegativeSecurity_OperatorAWithValidToken_CannotAccessOperatorB_PortsCommandsOrTelemetry()
+    public async Task NegativeSecurity_OperatorAWithValidToken_CannotAccessOrIngestIntoOperatorB()
     {
         var authController = new SerialLogHub.Api.Controllers.AuthController(
             _db, _passwordService, _configuration, NullLogger<SerialLogHub.Api.Controllers.AuthController>.Instance);
@@ -144,7 +163,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         });
         await _db.SaveChangesAsync();
 
-        // Alice logs in and receives a real DB-backed operatorToken bound to alice@example.com
         var loginOk = Assert.IsType<OkObjectResult>(await authController.Login(new UserAuthRequest
         {
             Email = "alice@example.com",
@@ -154,7 +172,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         string aliceToken = loginDoc.RootElement.GetProperty("operatorToken").GetString()!;
         Assert.StartsWith("slh_op_", aliceToken);
 
-        // Verify the token is stored hashed (not plaintext) in SQLite
         var storedKey = await _db.ApiKeys.SingleAsync(k => k.OwnerEmail == "alice@example.com");
         Assert.StartsWith("sha256:", storedKey.Key);
         Assert.NotEqual(aliceToken, storedKey.Key);
@@ -196,7 +213,19 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var bobTelRes = Assert.IsType<ObjectResult>(await telemetryController.GetHistory("bob@example.com"));
         Assert.Equal(StatusCodes.Status403Forbidden, bobTelRes.StatusCode);
 
-        // 5. Forged X-OPERATOR-EMAIL header alongside Alice's valid token -> 403 Forbidden
+        // 5. Cross-user BOLA: Alice trying to ingest telemetry into Bob's device -> 403 Forbidden
+        var bobIngestRes = Assert.IsType<ObjectResult>(await telemetryController.IngestTelemetry(new TelemetryIngestRequest
+        {
+            Email = "bob@example.com",
+            PortName = "COM7 (Bob Hardware)",
+            Samples = new List<TelemetryInputSample>
+            {
+                new() { Temperature = 22.0, Humidity = 50.0, RecordedAt = DateTime.UtcNow }
+            }
+        }));
+        Assert.Equal(StatusCodes.Status403Forbidden, bobIngestRes.StatusCode);
+
+        // 6. Forged X-OPERATOR-EMAIL header alongside Alice's valid token -> 403 Forbidden
         var forgedContext = new DefaultHttpContext();
         forgedContext.Request.Headers[OperatorScopeGuard.OperatorTokenHeaderName] = aliceToken;
         forgedContext.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "bob@example.com";
@@ -204,6 +233,55 @@ public sealed class TelemetryAndSecurityTests : IDisposable
 
         var forgedRes = Assert.IsType<ObjectResult>(await userController.GetPorts("bob@example.com"));
         Assert.Equal(StatusCodes.Status403Forbidden, forgedRes.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("dev-serialloghub-api-key")]
+    [InlineData("CHANGE_ME_IN_PRODUCTION")]
+    [InlineData("replace-with-strong-api-key")]
+    [InlineData("short-key")]
+    [InlineData("")]
+    public void NegativeSecurity_ProductionSecurityValidator_RejectsDevelopmentOrWeakApiKeys(string badApiKey)
+    {
+        var prodConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ApiSecurity:RequireApiKey"] = "true",
+                ["ApiSecurity:ApiKey"] = badApiKey
+            })
+            .Build();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSecurityValidator.ValidateApiConfiguration(prodConfig, isProduction: true));
+    }
+
+    [Fact]
+    public void NegativeSecurity_ProductionSecurityValidator_RejectsDisabledApiKeyAndDefaultDemoPassword()
+    {
+        var disabledAuthConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ApiSecurity:RequireApiKey"] = "false",
+                ["ApiSecurity:ApiKey"] = "strong-production-secret-key-256-bits-long"
+            })
+            .Build();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSecurityValidator.ValidateApiConfiguration(disabledAuthConfig, isProduction: true));
+
+        var defaultDemoPassConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ApiSecurity:RequireApiKey"] = "true",
+                ["ApiSecurity:ApiKey"] = "strong-production-secret-key-256-bits-long",
+                ["DemoMode:Enabled"] = "true",
+                ["DemoMode:CloudVirtualDeviceResponder"] = "false",
+                ["DemoMode:DemoPassword"] = "Demo1234!"
+            })
+            .Build();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ProductionSecurityValidator.ValidateApiConfiguration(defaultDemoPassConfig, isProduction: true));
     }
 
     [Fact]
@@ -231,7 +309,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
             });
         await _db.SaveChangesAsync();
 
-        // 1. Expired operator token -> 401
         var expiredCtx = new DefaultHttpContext();
         expiredCtx.Request.Headers[OperatorScopeGuard.OperatorTokenHeaderName] = expiredRaw;
         var userController = new UserController(_db, NullLogger<UserController>.Instance, _anomalyEngine, _configuration)
@@ -241,16 +318,14 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var expRes = Assert.IsType<ObjectResult>(await userController.GetPorts("alice@example.com"));
         Assert.Equal(StatusCodes.Status401Unauthorized, expRes.StatusCode);
 
-        // 2. Revoked operator token -> 401
         var revokedCtx = new DefaultHttpContext();
         revokedCtx.Request.Headers[OperatorScopeGuard.OperatorTokenHeaderName] = revokedRaw;
         userController.ControllerContext = new ControllerContext { HttpContext = revokedCtx };
         var revRes = Assert.IsType<ObjectResult>(await userController.GetPorts("alice@example.com"));
         Assert.Equal(StatusCodes.Status401Unauthorized, revRes.StatusCode);
 
-        // 3. Replayed HMAC proof (> 5 minutes old) -> 401
         long staleTimestamp = DateTimeOffset.UtcNow.AddMinutes(-15).ToUnixTimeSeconds();
-        string staleProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", staleTimestamp, "test-master-api-key-secret");
+        string staleProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", staleTimestamp, "test-master-api-key-secret-value-256");
         var replayCtx = new DefaultHttpContext();
         replayCtx.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "alice@example.com";
         replayCtx.Request.Headers[OperatorScopeGuard.OperatorTimestampHeaderName] = staleTimestamp.ToString();
@@ -260,9 +335,8 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var replayRes = Assert.IsType<ObjectResult>(await userController.GetPorts("alice@example.com"));
         Assert.Equal(StatusCodes.Status401Unauthorized, replayRes.StatusCode);
 
-        // 4. Valid current HMAC proof (Web Server -> API workflow) -> Authorized!
         long freshTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        string freshProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", freshTimestamp, "test-master-api-key-secret");
+        string freshProof = OperatorScopeGuard.ComputeOperatorHmacProof("alice@example.com", freshTimestamp, "test-master-api-key-secret-value-256");
         var validHmacCtx = new DefaultHttpContext();
         validHmacCtx.Request.Headers[OperatorScopeGuard.OperatorEmailHeaderName] = "alice@example.com";
         validHmacCtx.Request.Headers[OperatorScopeGuard.OperatorTimestampHeaderName] = freshTimestamp.ToString();
@@ -305,14 +379,12 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         bool nextCalled = false;
         var middleware = new ApiKeyMiddleware(_ => { nextCalled = true; return Task.CompletedTask; }, _configuration, NullLogger<ApiKeyMiddleware>.Instance);
 
-        // 1. Missing X-API-KEY -> 401
         var missingCtx = new DefaultHttpContext();
         missingCtx.Request.Path = "/api/user/getports";
         await middleware.InvokeAsync(missingCtx, _db);
         Assert.Equal(StatusCodes.Status401Unauthorized, missingCtx.Response.StatusCode);
         Assert.False(nextCalled);
 
-        // 2. Expired DB X-API-KEY -> 401
         var expiredCtx = new DefaultHttpContext();
         expiredCtx.Request.Path = "/api/user/getports";
         expiredCtx.Request.Headers["X-API-KEY"] = expiredApiKey;
@@ -320,7 +392,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         Assert.Equal(StatusCodes.Status401Unauthorized, expiredCtx.Response.StatusCode);
         Assert.False(nextCalled);
 
-        // 3. Valid hashed DB X-API-KEY -> 200 & binds AuthenticatedOperatorEmail to alice@example.com
         var validCtx = new DefaultHttpContext();
         validCtx.Request.Path = "/api/user/getports";
         validCtx.Request.Headers["X-API-KEY"] = activeApiKey;
@@ -352,12 +423,19 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     }
 
     [Fact]
-    public async Task DatabaseMigration_UpgradesLegacyV1SqliteDatabase_PreservingAllDataAndHashingKeys()
+    public async Task DatabaseMigration_UpgradesLegacyV1SqliteDatabase_AndFailsWhenCoreTableMissing()
     {
+        // 1. Missing core tables must fail observably (not swallow exceptions)
+        using var emptyConn = new SqliteConnection("DataSource=:memory:");
+        await emptyConn.OpenAsync();
+        var emptyOpts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(emptyConn).Options;
+        using var emptyDb = new AppDbContext(emptyOpts);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => DbSeeder.UpgradeSchemaAndMigrateAsync(emptyDb));
+
+        // 2. Legacy v1 schema upgrade preserves all rows and hashes plaintext keys
         using var legacyConn = new SqliteConnection("DataSource=:memory:");
         await legacyConn.OpenAsync();
 
-        // 1. Create a strict legacy v1 schema (only the original 5 tables and original columns)
         using (var cmd = legacyConn.CreateCommand())
         {
             cmd.CommandText = @"
@@ -418,7 +496,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(legacyConn).Options;
         using var upgradedDb = new AppDbContext(opts);
 
-        // 2. Run versioned schema upgrade twice to verify idempotency and data preservation
         await DbSeeder.UpgradeSchemaAndMigrateAsync(upgradedDb);
         await DbSeeder.UpgradeSchemaAndMigrateAsync(upgradedDb);
 
@@ -435,12 +512,96 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task TelemetryController_IngestHistoryAndCompare_PersistsDeduplicatesAndValidatesInput()
+    {
+        var controller = new TelemetryController(_db, _anomalyEngine, NullLogger<TelemetryController>.Instance, _configuration)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = OperatorScopeGuard.CreateAuthenticatedContext("ops@example.com")
+            }
+        };
+
+        string payloadA = string.Join("\n", new[]
+        {
+            "CMD,OK,LSD,",
+            "CMD,OK,22.10,48.00,2026,11,22,10,00,00",
+            "CMD,OK,22.20,48.50,2026,11,22,10,00,20",
+            "CMD,OK,35.90,49.00,2026,11,22,10,00,40"
+        });
+
+        var ingestA = await controller.IngestTelemetry(new TelemetryIngestRequest
+        {
+            Email = "ops@example.com",
+            PortName = "COM99",
+            DeviceName = "Vault_A",
+            RawCsvPayload = payloadA
+        });
+        Assert.IsType<OkObjectResult>(ingestA);
+
+        var duplicateA = await controller.IngestTelemetry(new TelemetryIngestRequest
+        {
+            Email = "ops@example.com",
+            PortName = "COM99",
+            DeviceName = "Vault_A",
+            RawCsvPayload = payloadA
+        });
+        var dupOk = Assert.IsType<OkObjectResult>(duplicateA);
+        Assert.Contains("\"insertedCount\":0", JsonSerializer.Serialize(dupOk.Value));
+
+        await controller.IngestTelemetry(new TelemetryIngestRequest
+        {
+            Email = "ops@example.com",
+            PortName = "COM98",
+            DeviceName = "Vault_B",
+            RawCsvPayload = "CMD,OK,19.50,55.00,2026,11,22,10,00,00\nCMD,OK,19.60,55.20,2026,11,22,10,00,20"
+        });
+
+        var historyRes = await controller.GetHistory("ops@example.com", anomaliesOnly: true);
+        var histOk = Assert.IsType<OkObjectResult>(historyRes);
+        Assert.Contains("\"totalCount\":1", JsonSerializer.Serialize(histOk.Value));
+
+        // Invalid date range (fromUtc > toUtc) -> 400 BadRequest
+        var badRangeRes = await controller.GetHistory(
+            "ops@example.com",
+            fromUtc: DateTime.UtcNow,
+            toUtc: DateTime.UtcNow.AddDays(-1));
+        Assert.IsType<BadRequestObjectResult>(badRangeRes);
+
+        // Future timestamp (> +2 hours) -> 400 BadRequest
+        var futureSampleRes = await controller.IngestTelemetry(new TelemetryIngestRequest
+        {
+            Email = "ops@example.com",
+            PortName = "COM99",
+            Samples = new List<TelemetryInputSample>
+            {
+                new() { Temperature = 22.0, Humidity = 50.0, RecordedAt = DateTime.UtcNow.AddDays(5) }
+            }
+        });
+        Assert.IsType<BadRequestObjectResult>(futureSampleRes);
+
+        var devices = await _db.Devices.Where(d => d.UserEmail == "ops@example.com").ToListAsync();
+        Assert.Equal(2, devices.Count);
+
+        var cmpRes = await controller.CompareDevices("ops@example.com", devices[0].Id, devices[1].Id);
+        var cmpOk = Assert.IsType<OkObjectResult>(cmpRes);
+        string cmpJson = JsonSerializer.Serialize(cmpOk.Value);
+        Assert.Contains("Vault_A", cmpJson);
+        Assert.Contains("Vault_B", cmpJson);
+    }
+
+    [Fact]
     public async Task TelemetryPerformance_HandlesLargeBatchDeduplication_AndRejectsOversizedBatch()
     {
-        var controller = new TelemetryController(_db, _anomalyEngine, NullLogger<TelemetryController>.Instance);
+        var controller = new TelemetryController(_db, _anomalyEngine, NullLogger<TelemetryController>.Instance, _configuration)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = OperatorScopeGuard.CreateAuthenticatedContext("perf@example.com")
+            }
+        };
         var start = new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc);
 
-        // 1. Ingest 1,500 synthetic samples in one batch
         var batch1500 = Enumerable.Range(0, 1500)
             .Select(i => new TelemetryInputSample
             {
@@ -460,7 +621,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var ok1 = Assert.IsType<OkObjectResult>(res1);
         Assert.Contains("\"insertedCount\":1500", JsonSerializer.Serialize(ok1.Value));
 
-        // 2. Re-ingest an overlapping window of 500 existing samples + 100 new samples -> must insert only 100
         var overlapping600 = Enumerable.Range(1000, 600)
             .Select(i => new TelemetryInputSample
             {
@@ -480,7 +640,6 @@ public sealed class TelemetryAndSecurityTests : IDisposable
         var ok2 = Assert.IsType<OkObjectResult>(res2);
         Assert.Contains("\"insertedCount\":100", JsonSerializer.Serialize(ok2.Value));
 
-        // 3. Oversized batch (> 5000 samples) -> 400 BadRequest
         var oversized = Enumerable.Range(0, TelemetryController.MaxSamplesPerIngest + 1)
             .Select(i => new TelemetryInputSample
             {
@@ -497,6 +656,41 @@ public sealed class TelemetryAndSecurityTests : IDisposable
             Samples = oversized
         });
         Assert.IsType<BadRequestObjectResult>(overRes);
+    }
+
+    [Fact]
+    public void BridgeEngine_BoundedDurableResponseBuffer_EnforcesCapDeduplicatesAndRecoversFromDisk()
+    {
+        string tempBufferFile = Path.Combine(Path.GetTempPath(), $"slh_test_buf_{Guid.NewGuid():N}.json");
+        try
+        {
+            using var apiClient = new BridgeApiClient(new BridgeConfiguration());
+            var engine = new BridgeEngine(apiClient, new RealSerialTransport(), new SimulatedSerialTransport(), tempBufferFile);
+
+            // Duplicate command ID is ignored
+            engine.EnqueueBufferedResponse("ops@example.com", "cmd-1", "CMD,OK,BAT,87");
+            engine.EnqueueBufferedResponse("ops@example.com", "cmd-1", "CMD,OK,BAT,87");
+            Assert.Equal(1, engine.BufferedResponseCount);
+
+            // Enqueue 60 items -> bounded at MaxBufferedResponses (50)
+            for (int i = 2; i <= 60; i++)
+            {
+                engine.EnqueueBufferedResponse("ops@example.com", $"cmd-{i}", "CMD,OK");
+            }
+            Assert.Equal(BridgeEngine.MaxBufferedResponses, engine.BufferedResponseCount);
+
+            // Restart recovery from disk
+            var recoveredEngine = new BridgeEngine(apiClient, new RealSerialTransport(), new SimulatedSerialTransport(), tempBufferFile);
+            Assert.Equal(BridgeEngine.MaxBufferedResponses, recoveredEngine.BufferedResponseCount);
+
+            Assert.True(BridgeApiClient.IsPermanentHttpFailure(HttpStatusCode.Unauthorized));
+            Assert.True(BridgeApiClient.IsPermanentHttpFailure(HttpStatusCode.Forbidden));
+            Assert.False(BridgeApiClient.IsPermanentHttpFailure(HttpStatusCode.ServiceUnavailable));
+        }
+        finally
+        {
+            if (File.Exists(tempBufferFile)) File.Delete(tempBufferFile);
+        }
     }
 
     [Fact]
@@ -582,7 +776,13 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     [Fact]
     public async Task UserController_TransitionsCommandLifecycle_AndAutoPersistsWlbTelemetry()
     {
-        var controller = new UserController(_db, NullLogger<UserController>.Instance, _anomalyEngine);
+        var controller = new UserController(_db, NullLogger<UserController>.Instance, _anomalyEngine, _configuration)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = OperatorScopeGuard.CreateAuthenticatedContext("ops@example.com")
+            }
+        };
 
         var sendRes = Assert.IsType<OkObjectResult>(await controller.SendCommand(new SendCommandRequest
         {

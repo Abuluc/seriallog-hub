@@ -1,14 +1,28 @@
+using System.Text.Json;
+
 namespace SerialLogHub.Desktop.Services;
+
+public sealed class BufferedCommandResponse
+{
+    public string UserEmail { get; set; } = string.Empty;
+    public string CommandId { get; set; } = string.Empty;
+    public string ResponseText { get; set; } = string.Empty;
+    public DateTime QueuedAtUtc { get; set; } = DateTime.UtcNow;
+}
 
 public sealed class BridgeEngine
 {
+    public const int MaxBufferedResponses = 50;
+
     private readonly BridgeApiClient _apiClient;
     private readonly RealSerialTransport _realTransport;
     private readonly SimulatedSerialTransport _simulatedTransport;
+    private readonly string _durableBufferFilePath;
     private readonly SemaphoreSlim _commandLock = new(1, 1);
     private readonly SemaphoreSlim _portSyncLock = new(1, 1);
     private readonly HashSet<string> _completedCommandIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _dispatchedNonIdempotentIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<BufferedCommandResponse> _pendingResponses = new();
     private List<string> _lastPublishedPorts = new();
     private int _consecutiveEmptyPolls;
     private int _consecutiveErrorCount;
@@ -17,32 +31,139 @@ public sealed class BridgeEngine
     public BridgeEngine(
         BridgeApiClient apiClient,
         RealSerialTransport realTransport,
-        SimulatedSerialTransport simulatedTransport)
+        SimulatedSerialTransport simulatedTransport,
+        string? durableBufferFilePath = null)
     {
         _apiClient = apiClient;
         _realTransport = realTransport;
         _simulatedTransport = simulatedTransport;
+        _durableBufferFilePath = durableBufferFilePath ??
+            Path.Combine(Path.GetTempPath(), "serialloghub_bridge_pending_responses.json");
+
+        LoadBufferedResponsesFromDisk();
     }
 
     public bool IncludeVirtualDemoDevice { get; set; }
+    public int BufferedResponseCount => _pendingResponses.Count;
 
     public event Action<string>? LogReceived;
     public event Action<IReadOnlyList<string>>? PortsUpdated;
 
-    /// <summary>
-    /// Returns true if a serial command mutates or erases device state and must NEVER be automatically retried.
-    /// </summary>
     public static bool IsNonIdempotentPhysicalCommand(string? commandMessage)
     {
         if (string.IsNullOrWhiteSpace(commandMessage)) return false;
         string cmd = commandMessage.Trim().ToUpperInvariant();
-        return cmd.StartsWith("WLE1", StringComparison.Ordinal) || // Flash memory erase
-               cmd.StartsWith("WLH1", StringComparison.Ordinal) || // RTC write
-               cmd.StartsWith("WLS0", StringComparison.Ordinal) || // Delayed start write
-               cmd.StartsWith("WLM", StringComparison.Ordinal) ||  // Alarm threshold write
-               cmd.StartsWith("WLA", StringComparison.Ordinal) ||  // Interval write
-               cmd.StartsWith("WLV1", StringComparison.Ordinal) || // Auto-start trigger
-               cmd.StartsWith("WLG", StringComparison.Ordinal);    // Label write
+        return cmd.StartsWith("WLE1", StringComparison.Ordinal) ||
+               cmd.StartsWith("WLH1", StringComparison.Ordinal) ||
+               cmd.StartsWith("WLS0", StringComparison.Ordinal) ||
+               cmd.StartsWith("WLM", StringComparison.Ordinal) ||
+               cmd.StartsWith("WLA", StringComparison.Ordinal) ||
+               cmd.StartsWith("WLV1", StringComparison.Ordinal) ||
+               cmd.StartsWith("WLG", StringComparison.Ordinal);
+    }
+
+    public void EnqueueBufferedResponse(string userEmail, string commandId, string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(commandId)) return;
+
+        // Deduplicate by CommandId
+        if (_pendingResponses.Any(r => string.Equals(r.CommandId, commandId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        // Enforce strict bounded queue limit (evict oldest when full)
+        while (_pendingResponses.Count >= MaxBufferedResponses)
+        {
+            _pendingResponses.RemoveAt(0);
+        }
+
+        _pendingResponses.Add(new BufferedCommandResponse
+        {
+            UserEmail = userEmail,
+            CommandId = commandId,
+            ResponseText = responseText,
+            QueuedAtUtc = DateTime.UtcNow
+        });
+
+        SaveBufferedResponsesToDisk();
+    }
+
+    private void LoadBufferedResponsesFromDisk()
+    {
+        try
+        {
+            if (!File.Exists(_durableBufferFilePath)) return;
+            string json = File.ReadAllText(_durableBufferFilePath);
+            var items = JsonSerializer.Deserialize<List<BufferedCommandResponse>>(json);
+            if (items != null)
+            {
+                foreach (var item in items.TakeLast(MaxBufferedResponses))
+                {
+                    if (!string.IsNullOrWhiteSpace(item.CommandId))
+                    {
+                        _pendingResponses.Add(item);
+                        _completedCommandIds.Add(item.CommandId);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore corrupted local buffer file on startup
+        }
+    }
+
+    private void SaveBufferedResponsesToDisk()
+    {
+        try
+        {
+            if (_pendingResponses.Count == 0)
+            {
+                if (File.Exists(_durableBufferFilePath)) File.Delete(_durableBufferFilePath);
+                return;
+            }
+            string json = JsonSerializer.Serialize(_pendingResponses);
+            File.WriteAllText(_durableBufferFilePath, json);
+        }
+        catch
+        {
+            // Non-fatal if temp directory is read-only
+        }
+    }
+
+    private async Task FlushBufferedResponsesAsync(CancellationToken ct)
+    {
+        if (_pendingResponses.Count == 0) return;
+
+        var snapshot = _pendingResponses.ToList();
+        bool changed = false;
+
+        foreach (var item in snapshot)
+        {
+            var (success, isPermanent) = await _apiClient.UpdateCommandResponseDetailedAsync(
+                item.UserEmail, item.CommandId, item.ResponseText, ct);
+
+            if (success || isPermanent)
+            {
+                _pendingResponses.Remove(item);
+                changed = true;
+                if (success)
+                {
+                    LogReceived?.Invoke($"Flushed buffered response for command [{item.CommandId}].");
+                }
+            }
+            else
+            {
+                // Network still unavailable; stop flushing until next cycle
+                break;
+            }
+        }
+
+        if (changed)
+        {
+            SaveBufferedResponsesToDisk();
+        }
     }
 
     public async Task SyncPortsAsync(string userEmail, bool forcePublish = false, CancellationToken ct = default)
@@ -109,13 +230,14 @@ public sealed class BridgeEngine
 
         try
         {
+            await FlushBufferedResponsesAsync(ct);
+
             var command = await _apiClient.GetPendingCommandAsync(userEmail, ct);
             _consecutiveErrorCount = 0;
 
             if (command == null)
             {
                 _consecutiveEmptyPolls++;
-                // Adaptive idle backoff: fast polling when active, gentle backoff when idle
                 if (_consecutiveEmptyPolls > 40)
                 {
                     _nextPollEarliestUtc = DateTime.UtcNow.AddMilliseconds(2500);
@@ -127,13 +249,12 @@ public sealed class BridgeEngine
                 return;
             }
 
-            // Reset adaptive backoff immediately when a command arrives
             _consecutiveEmptyPolls = 0;
             _nextPollEarliestUtc = DateTime.MinValue;
 
             if (!string.IsNullOrWhiteSpace(command.CommandId) && _completedCommandIds.Contains(command.CommandId))
             {
-                await _apiClient.UpdateCommandResponseAsync(userEmail, command.CommandId, "Error: Command already processed locally.", ct);
+                await _apiClient.UpdateCommandResponseDetailedAsync(userEmail, command.CommandId, "Error: Command already processed locally.", ct);
                 return;
             }
 
@@ -141,7 +262,7 @@ public sealed class BridgeEngine
                 IsNonIdempotentPhysicalCommand(command.Message) &&
                 !_dispatchedNonIdempotentIds.Add(command.CommandId))
             {
-                await _apiClient.UpdateCommandResponseAsync(
+                await _apiClient.UpdateCommandResponseDetailedAsync(
                     userEmail,
                     command.CommandId,
                     "Error: Non-idempotent hardware command was already dispatched once; duplicate execution blocked for device safety.",
@@ -189,10 +310,15 @@ public sealed class BridgeEngine
                 _completedCommandIds.Add(command.CommandId);
             }
 
-            bool updated = await _apiClient.UpdateCommandResponseAsync(userEmail, command.CommandId, responseText, ct);
-            if (!updated)
+            var (updated, isPermanent) = await _apiClient.UpdateCommandResponseDetailedAsync(userEmail, command.CommandId, responseText, ct);
+            if (!updated && !isPermanent && !string.IsNullOrWhiteSpace(command.CommandId))
             {
-                LogReceived?.Invoke($"Warning: Failed to report response for [{shortId}] back to API.");
+                EnqueueBufferedResponse(userEmail, command.CommandId, responseText);
+                LogReceived?.Invoke($"Buffered response for [{shortId}] locally ({_pendingResponses.Count}/{MaxBufferedResponses} queued) for delivery upon reconnect.");
+            }
+            else if (!updated && isPermanent)
+            {
+                LogReceived?.Invoke($"Permanent API rejection for [{shortId}]; response was not queued for retry.");
             }
         }
         catch (OperationCanceledException)

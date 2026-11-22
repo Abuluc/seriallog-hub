@@ -1,15 +1,21 @@
-# Security Policy
+# Security Policy (`SECURITY.md`)
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in **SerialLog Hub**, please do not open a public issue containing exploit details. Instead, report it privately to the repository maintainer via GitHub Security Advisories.
 
-## Implemented Security Controls
+## Implemented Security Controls (.NET 10 LTS)
 
-- **Zero Direct Client Database Access:** Both `SerialLogHub.Web` and `SerialLogHub.Desktop` communicate exclusively through `SerialLogHub.Api`.
-- **Salted PBKDF2 Password Storage:** Passwords are stored using ASP.NET Core `PasswordHasher<string>` with unique per-user salts.
-- **API Key & Bridge Key Isolation:** Backend endpoints require `X-API-KEY`; Desktop-to-Web SignalR webhooks (`/Home/AppCheck`, `/Home/waitresponse`) require `X-BRIDGE-KEY`.
-- **Signed Cookie Claims & Authorized SignalR Hub:** User identity is resolved exclusively from signed ASP.NET Core authentication claims (`User.Identity.Name`), never from client-modifiable cookies.
-- **Rate Limiting:** Fixed-window per-IP rate limiting (180 requests/min) is enabled on both `SerialLogHub.Api` and `SerialLogHub.Web`.
-- **Demo Mode Isolation:** In public demo deployments, the shared demo account cannot be modified (`updatename` blocked), and transient command/history tables automatically reset on a schedule.
-- **Secret Hygiene:** No real credentials, IP addresses, certificates, or `.db` files are committed to source control. Use environment variables or secret managers in production.
+1. **Fail-Closed Operator Authorization & BOLA/IDOR Prevention (`OperatorScopeGuard`):**
+   - Null authentication contexts, missing operator identity headers, or bare unverified `X-OPERATOR-EMAIL` headers fail closed with `401 Unauthorized`.
+   - Desktop Bridge instances authenticate via `POST /api/auth/login` to receive a 256-bit operator-bound session token (`X-OPERATOR-TOKEN`) stored as a `sha256:<hex>` hash in `ApiKeys` (`OwnerEmail = user.Email`, `ClientType = "OperatorSession"`).
+   - Web Application backend proxy requests are cryptographically signed with `HMAC-SHA256(email|unixTimestamp)` (`X-OPERATOR-PROOF` + `X-OPERATOR-TIMESTAMP` with a $\pm 300\text{s}$ replay window).
+   - Any cross-operator access attempt (`OwnerEmail != targetEmail`) is rejected with `403 Forbidden`.
+2. **Production Configuration Validation (`ProductionSecurityValidator`):**
+   - Fails startup safely (`InvalidOperationException`) in Production if `ApiSecurity:RequireApiKey` is `false`, `ApiSecurity:ApiKey` is shorter than 16 characters, or any development fallback secret (`dev-serialloghub-api-key`, `CHANGE_ME_IN_PRODUCTION`, `Demo1234!`) is configured.
+3. **Salted PBKDF2 Password Storage (`PasswordSecurityService`):**
+   - Passwords are stored using ASP.NET Core `PasswordHasher<string>` with unique per-user salts.
+4. **Constant-Time Secret Verification:**
+   - API keys, Bridge webhook keys (`X-BRIDGE-KEY`), HMAC proofs, and password reset tokens are verified with `CryptographicOperations.FixedTimeEquals`.
+5. **Brute-Force Rate Limiting & HTTP Security Headers:**
+   - Authentication endpoints enforce a strict `"auth-brute-force"` policy (`10 req/min` per IP), alongside a global `180 req/min` limiter, `5 MB` request body cap, and `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, and `X-Permitted-Cross-Domain-Policies: none`.
