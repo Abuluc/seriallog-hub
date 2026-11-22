@@ -2,6 +2,7 @@
 
 > **[Türkçe Dokümantasyon (`README.tr.md`)](README.tr.md)** | **[Main Page (`README.md`)](README.md)**
 
+[![CI Build & Test](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-8.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
 [![EF Core SQLite](https://img.shields.io/badge/EF%20Core-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)

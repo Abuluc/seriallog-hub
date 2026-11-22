@@ -4,6 +4,7 @@
 
 **A three-tier DataLogger management platform for serial device configuration, COM port bridging, anomaly detection, and interactive telemetry visualization.**
 
+[![CI Build & Test](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-MVC%20%2B%20Web%20API-0078D4)](https://learn.microsoft.com/aspnet/core/)
 [![SignalR](https://img.shields.io/badge/SignalR-Real--Time-0ea5e9)](https://learn.microsoft.com/aspnet/core/signalr/)
