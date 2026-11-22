@@ -34,28 +34,28 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth-brute-force")]
     public async Task<IActionResult> Login([FromBody] UserAuthRequest request)
     {
-        if (request == null || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.HashedPassword))
+        string? rawIdentifier = !string.IsNullOrWhiteSpace(request?.Email)
+            ? request.Email
+            : request?.Username;
+
+        if (request == null || string.IsNullOrWhiteSpace(rawIdentifier) || string.IsNullOrWhiteSpace(request.HashedPassword))
         {
-            return BadRequest("Invalid login credentials.");
+            return BadRequest("Email/username and password are required.");
         }
 
-        string normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+        string normalizedIdentifier = rawIdentifier.Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u =>
+            u.Email.ToLower() == normalizedIdentifier ||
+            u.Username.ToLower() == normalizedIdentifier);
 
         if (user == null)
         {
             return NotFound("User not found.");
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Username) &&
-            !string.Equals(user.Username, request.Username.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            return BadRequest("Invalid username.");
-        }
-
         if (!_passwordService.VerifyPassword(user.Email, user.HashedPassword, request.HashedPassword))
         {
-            _logger.LogWarning("Failed password authentication attempt for {Email}.", normalizedEmail);
+            _logger.LogWarning("Failed password authentication attempt for {Email}.", user.Email);
             return Unauthorized("Incorrect password.");
         }
 

@@ -186,6 +186,46 @@ public sealed class TelemetryAndSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task AuthController_Login_AcceptsEitherEmailOrUsername()
+    {
+        var config = new ConfigurationBuilder().Build();
+        var authController = new AuthController(_db, _passwordService, config, NullLogger<AuthController>.Instance);
+
+        _db.Users.Add(new UserEntity
+        {
+            Email = "operator@serialloghub.local",
+            Username = "field_operator",
+            HashedPassword = _passwordService.HashForStorage("operator@serialloghub.local", "SecretPass123!"),
+            IsEmailVerified = true
+        });
+        await _db.SaveChangesAsync();
+
+        // 1. Login with Email only
+        var emailLogin = await authController.Login(new UserAuthRequest
+        {
+            Email = "operator@serialloghub.local",
+            HashedPassword = "SecretPass123!"
+        });
+        Assert.IsType<OkObjectResult>(emailLogin);
+
+        // 2. Login with Username only (sent in Email or Username field)
+        var usernameInEmailField = await authController.Login(new UserAuthRequest
+        {
+            Email = "field_operator",
+            HashedPassword = "SecretPass123!"
+        });
+        var okUser = Assert.IsType<OkObjectResult>(usernameInEmailField);
+        Assert.Contains("operator@serialloghub.local", System.Text.Json.JsonSerializer.Serialize(okUser.Value));
+
+        var usernameOnly = await authController.Login(new UserAuthRequest
+        {
+            Username = "field_operator",
+            HashedPassword = "SecretPass123!"
+        });
+        Assert.IsType<OkObjectResult>(usernameOnly);
+    }
+
+    [Fact]
     public async Task UserController_TransitionsCommandLifecycle_AndAutoPersistsWlbTelemetry()
     {
         var controller = new UserController(_db, NullLogger<UserController>.Instance, _anomalyEngine);

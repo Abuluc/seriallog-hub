@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SerialLogHub.Desktop.Models;
 using SerialLogHub.Desktop.Services;
 
@@ -7,8 +8,7 @@ public sealed class LoginForm : Form
 {
     private readonly BridgeConfiguration _config;
     private readonly BridgeApiClient _apiClient;
-    private readonly TextBox _emailBox;
-    private readonly TextBox _usernameBox;
+    private readonly TextBox _identifierBox;
     private readonly TextBox _passwordBox;
     private readonly Button _loginButton;
     private readonly Button _demoFillButton;
@@ -23,7 +23,7 @@ public sealed class LoginForm : Form
         _apiClient = apiClient;
 
         Text = "SerialLog Hub — COM Port Bridge Sign In";
-        ClientSize = new Size(420, 340);
+        ClientSize = new Size(420, 290);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -55,19 +55,16 @@ public sealed class LoginForm : Form
         header.Controls.Add(title);
         header.Controls.Add(subtitle);
 
-        var emailLabel = new Label { Text = "Email", Location = new Point(24, 86), AutoSize = true };
-        _emailBox = new TextBox { Location = new Point(24, 108), Width = 370 };
+        var idLabel = new Label { Text = "Email or Username", Location = new Point(24, 86), AutoSize = true };
+        _identifierBox = new TextBox { Location = new Point(24, 108), Width = 370 };
 
-        var userLabel = new Label { Text = "Username", Location = new Point(24, 142), AutoSize = true };
-        _usernameBox = new TextBox { Location = new Point(24, 164), Width = 370 };
-
-        var passLabel = new Label { Text = "Password", Location = new Point(24, 198), AutoSize = true };
-        _passwordBox = new TextBox { Location = new Point(24, 220), Width = 370, UseSystemPasswordChar = true };
+        var passLabel = new Label { Text = "Password", Location = new Point(24, 144), AutoSize = true };
+        _passwordBox = new TextBox { Location = new Point(24, 166), Width = 370, UseSystemPasswordChar = true };
 
         _loginButton = new Button
         {
             Text = "Sign In",
-            Location = new Point(24, 260),
+            Location = new Point(24, 210),
             Width = 180,
             Height = 34,
             BackColor = Color.FromArgb(37, 99, 235),
@@ -80,7 +77,7 @@ public sealed class LoginForm : Form
         _demoFillButton = new Button
         {
             Text = "Fill Demo Operator",
-            Location = new Point(214, 260),
+            Location = new Point(214, 210),
             Width = 180,
             Height = 34,
             FlatStyle = FlatStyle.Flat,
@@ -89,14 +86,13 @@ public sealed class LoginForm : Form
         };
         _demoFillButton.Click += (_, _) =>
         {
-            _emailBox.Text = _config.DemoEmail;
-            _usernameBox.Text = _config.DemoUsername;
+            _identifierBox.Text = _config.DemoEmail;
             _passwordBox.Text = "Demo1234!";
         };
 
         _statusLabel = new Label
         {
-            Location = new Point(24, 304),
+            Location = new Point(24, 254),
             Width = 370,
             ForeColor = Color.FromArgb(220, 38, 38),
             AutoSize = false
@@ -104,7 +100,7 @@ public sealed class LoginForm : Form
 
         Controls.AddRange(new Control[]
         {
-            header, emailLabel, _emailBox, userLabel, _usernameBox,
+            header, idLabel, _identifierBox,
             passLabel, _passwordBox, _loginButton, _demoFillButton, _statusLabel
         });
 
@@ -113,9 +109,10 @@ public sealed class LoginForm : Form
 
     private async void OnLoginClick(object? sender, EventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(_emailBox.Text) || string.IsNullOrWhiteSpace(_passwordBox.Text))
+        string identifier = _identifierBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(identifier) || string.IsNullOrWhiteSpace(_passwordBox.Text))
         {
-            _statusLabel.Text = "Please enter both email and password.";
+            _statusLabel.Text = "Please enter your email/username and password.";
             return;
         }
 
@@ -125,7 +122,7 @@ public sealed class LoginForm : Form
 
         try
         {
-            var (success, message) = await _apiClient.LoginAsync(_emailBox.Text, _usernameBox.Text, _passwordBox.Text);
+            var (success, message) = await _apiClient.LoginAsync(identifier, identifier, _passwordBox.Text);
             if (!success)
             {
                 _statusLabel.ForeColor = Color.FromArgb(220, 38, 38);
@@ -133,8 +130,27 @@ public sealed class LoginForm : Form
                 return;
             }
 
-            AuthenticatedEmail = _emailBox.Text.Trim();
-            AuthenticatedUsername = _usernameBox.Text.Trim();
+            string resolvedEmail = identifier;
+            string resolvedUsername = identifier;
+            try
+            {
+                using var doc = JsonDocument.Parse(message);
+                if (doc.RootElement.TryGetProperty("email", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()))
+                {
+                    resolvedEmail = ep.GetString()!;
+                }
+                if (doc.RootElement.TryGetProperty("username", out var up) && !string.IsNullOrWhiteSpace(up.GetString()))
+                {
+                    resolvedUsername = up.GetString()!;
+                }
+            }
+            catch
+            {
+                // Fallback to identifier
+            }
+
+            AuthenticatedEmail = resolvedEmail.Trim();
+            AuthenticatedUsername = resolvedUsername.Trim();
             DialogResult = DialogResult.OK;
             Close();
         }

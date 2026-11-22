@@ -134,10 +134,13 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] UserModel model, CancellationToken ct)
     {
-        if (model == null || string.IsNullOrWhiteSpace(model.Email) || string.IsNullOrWhiteSpace(model.HashedPassword))
+        string? identifier = !string.IsNullOrWhiteSpace(model?.Email) ? model.Email : model?.Username;
+        if (model == null || string.IsNullOrWhiteSpace(identifier) || string.IsNullOrWhiteSpace(model.HashedPassword))
         {
-            return BadRequest(new { Error = "Email and password are required." });
+            return BadRequest(new { Error = "Email or username and password are required." });
         }
+
+        model.Email = identifier.Trim();
 
         try
         {
@@ -147,7 +150,21 @@ public class AuthController : ControllerBase
                 return BadRequest(new { Error = string.IsNullOrWhiteSpace(result) ? "Invalid credentials." : result });
             }
 
-            string normalizedEmail = model.Email.Trim().ToLowerInvariant();
+            string normalizedEmail = identifier.Trim().ToLowerInvariant();
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(result);
+                if (doc.RootElement.TryGetProperty("email", out var emailProp) &&
+                    !string.IsNullOrWhiteSpace(emailProp.GetString()))
+                {
+                    normalizedEmail = emailProp.GetString()!.Trim().ToLowerInvariant();
+                }
+            }
+            catch
+            {
+                // Keep fallback normalizedEmail
+            }
+
             var claims = new List<Claim>
             {
                 new(ClaimTypes.Name, normalizedEmail),
