@@ -77,16 +77,18 @@
 
         slice.forEach(r => {
             const tr = document.createElement("tr");
-            let statusHtml = '<span class="slh-badge slh-badge-ok">Normal</span>';
+            const tip = escapeHtml(r.anomalyExplanation || "Normal operating envelope");
+            const method = escapeHtml(r.anomalyMethod && r.anomalyMethod !== "None" ? ` (${r.anomalyMethod})` : "");
+            let statusHtml = `<span class="slh-badge slh-badge-ok" title="${tip}">Normal</span>`;
             if (r.temperatureAnomaly && r.humidityAnomaly) {
                 tr.className = "row-anomaly-both";
-                statusHtml = '<span class="slh-badge slh-badge-danger">Temp + Hum Spike</span>';
+                statusHtml = `<span class="slh-badge slh-badge-danger" title="${tip}">Dual Spike${method}</span>`;
             } else if (r.temperatureAnomaly) {
                 tr.className = "row-anomaly-temp";
-                statusHtml = '<span class="slh-badge slh-badge-danger">Temp Anomaly</span>';
+                statusHtml = `<span class="slh-badge slh-badge-danger" title="${tip}">Temp Anomaly${method}</span>`;
             } else if (r.humidityAnomaly) {
                 tr.className = "row-anomaly-hum";
-                statusHtml = '<span class="slh-badge slh-badge-warn">Hum Anomaly</span>';
+                statusHtml = `<span class="slh-badge slh-badge-warn" title="${tip}">Hum Anomaly${method}</span>`;
             }
 
             tr.innerHTML = `<td>${r.id}</td><td>${r.temperature.toFixed(2)}</td><td>${r.humidity.toFixed(2)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.clock)}</td><td>${statusHtml}</td>`;
@@ -215,6 +217,95 @@
             tbody.appendChild(frag);
         } catch {
             // ignore transient audit poll error
+        }
+    }
+
+    async function refreshServerDevices() {
+        const selA = document.getElementById("serverDeviceSelect");
+        const selB = document.getElementById("compareDeviceSelect");
+        if (!selA || !selB) return;
+        try {
+            const res = await fetch("/Home/ServerDevices");
+            if (!res.ok) return;
+            const devices = await res.json();
+            if (!Array.isArray(devices) || !devices.length) {
+                selA.innerHTML = '<option value="">No server devices stored yet</option>';
+                selB.innerHTML = '<option value="">No comparison device available</option>';
+                return;
+            }
+            selA.innerHTML = "";
+            selB.innerHTML = "";
+            devices.forEach((d, idx) => {
+                const label = `${d.deviceName} [${d.portName}] (${d.totalRecords} rows, ${d.anomalyRecords} anom.)`;
+                const optA = document.createElement("option");
+                optA.value = String(d.id);
+                optA.textContent = label;
+                selA.appendChild(optA);
+
+                const optB = document.createElement("option");
+                optB.value = String(d.id);
+                optB.textContent = label;
+                if (idx === 1) optB.selected = true;
+                selB.appendChild(optB);
+            });
+        } catch {
+            // ignore transient poll error
+        }
+    }
+
+    async function loadServerTelemetryHistory() {
+        const selA = document.getElementById("serverDeviceSelect");
+        const deviceId = selA ? selA.value : "";
+        if (!deviceId) {
+            toastr.warning("Select a persistent server device first.");
+            return;
+        }
+        try {
+            const res = await fetch(`/Home/ServerTelemetryHistory?deviceId=${encodeURIComponent(deviceId)}`);
+            if (!res.ok) { toastr.error("Failed to load server telemetry history."); return; }
+            const data = await res.json();
+            const records = data?.records || [];
+            if (!records.length) {
+                toastr.info("No historical records found for this device.");
+                return;
+            }
+            const lines = ["CMD,OK,LSD,"];
+            records.forEach(r => {
+                const dt = new Date(r.recordedAt);
+                lines.push(`CMD,OK,${Number(r.temperature).toFixed(2)},${Number(r.humidity).toFixed(2)},${dt.getUTCFullYear()},${String(dt.getUTCMonth() + 1).padStart(2, "0")},${String(dt.getUTCDate()).padStart(2, "0")},${String(dt.getUTCHours()).padStart(2, "0")},${String(dt.getUTCMinutes()).padStart(2, "0")},${String(dt.getUTCSeconds()).padStart(2, "0")}`);
+            });
+            const isSim = (records[0].portName || "").includes("Virtual") || (records[0].portName || "").includes("COM9");
+            applyDataset(lines.join("\n"), "SQLite Server Archive", `Server_Device_${deviceId}.csv`, isSim);
+            toastr.success(`Loaded ${records.length} persistent server telemetry records.`);
+        } catch {
+            toastr.error("Error loading server telemetry.");
+        }
+    }
+
+    async function compareServerDevices() {
+        const selA = document.getElementById("serverDeviceSelect");
+        const selB = document.getElementById("compareDeviceSelect");
+        const panel = document.getElementById("deviceComparisonPanel");
+        if (!selA?.value || !selB?.value || !panel) return;
+        try {
+            const res = await fetch(`/Home/CompareDevices?deviceA=${encodeURIComponent(selA.value)}&deviceB=${encodeURIComponent(selB.value)}`);
+            if (!res.ok) { toastr.error("Unable to compare selected devices."); return; }
+            const cmp = await res.json();
+            const a = cmp.deviceA;
+            const b = cmp.deviceB;
+            if (!a || !b) return;
+            panel.innerHTML =
+                `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">` +
+                `<div><strong>${escapeHtml(a.deviceName)}</strong> (<code>${escapeHtml(a.portName)}</code>)<br/>` +
+                `Samples: <strong>${a.sampleCount}</strong> | Anomalies: <strong>${a.anomalyCount} (${a.anomalyRatePercent}%)</strong><br/>` +
+                `Temp Min/Avg/Max: <strong>${a.minTemp} / ${a.avgTemp} / ${a.maxTemp} °C</strong> | Hum Avg: <strong>${a.avgHum} %</strong></div>` +
+                `<div><strong>${escapeHtml(b.deviceName)}</strong> (<code>${escapeHtml(b.portName)}</code>)<br/>` +
+                `Samples: <strong>${b.sampleCount}</strong> | Anomalies: <strong>${b.anomalyCount} (${b.anomalyRatePercent}%)</strong><br/>` +
+                `Temp Min/Avg/Max: <strong>${b.minTemp} / ${b.avgTemp} / ${b.maxTemp} °C</strong> | Hum Avg: <strong>${b.avgHum} %</strong></div>` +
+                `</div>`;
+            panel.style.display = "block";
+        } catch {
+            toastr.error("Device comparison failed.");
         }
     }
 
@@ -414,6 +505,13 @@
     document.addEventListener("DOMContentLoaded", function () {
         renderHistoryTable();
         refreshCommandHistory();
+        refreshServerDevices();
+
+        const loadServerBtn = document.getElementById("loadServerTelemetryBtn");
+        if (loadServerBtn) loadServerBtn.addEventListener("click", loadServerTelemetryHistory);
+
+        const compareBtn = document.getElementById("compareDevicesBtn");
+        if (compareBtn) compareBtn.addEventListener("click", compareServerDevices);
 
         const existingConn = window.SerialLogHub.getConnectionCookie();
         if (existingConn && existingConn.Connected) {

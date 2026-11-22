@@ -142,6 +142,25 @@ Polled by `SerialLogHub.Web` (with bounded timeout) until `isProcessed` is `true
 
 ---
 
+## 3.5. Persistent Telemetry & Statistical Anomaly Endpoints
+
+### `GET /api/telemetry/devices?email={email}`
+Returns all registered `Devices` for the authenticated operator (`X-OPERATOR-EMAIL` enforced), including `totalRecords` and `anomalyRecords`.
+
+### `POST /api/telemetry/ingest`
+Parses and persists a raw DataLogger `WLB` CSV payload or structured samples into `Devices` and `TelemetryRecords` (deduplicated by `(DeviceId, RecordedAt)`), evaluating each sample with `AnomalyDetectionEngine`.
+
+### `GET /api/telemetry/history?email={email}&deviceId={id}&fromUtc={iso}&toUtc={iso}&anomaliesOnly={bool}&page=1&pageSize=250`
+Returns paginated persistent telemetry records from SQLite along with summary statistics (`minTemp`, `avgTemp`, `maxTemp`, `minHum`, `avgHum`, `maxHum`) and explainable anomaly metadata (`anomalySeverity`, `anomalyMethod`, `anomalyExplanation`).
+
+### `GET /api/telemetry/compare?email={email}&deviceA={id1}&deviceB={id2}`
+Compares two operator devices side-by-side (Sample Count, Anomaly Count, Anomaly Rate %, and Min/Avg/Max Temperature & Humidity).
+
+### `POST /api/telemetry/analyze`
+Evaluates an arbitrary batch of telemetry readings against `AnomalyDetectionEngine` (`InvalidReading`, `StaticThreshold`, `SuddenSpike`, `RollingZScore`, `SensorDrift`, `MissingDataGap`) and returns structured explainable results.
+
+---
+
 ## 4. Web Bridge Webhooks & SignalR Hub (`SerialLogHub.Web`, Port 3000)
 
 - **`POST /Home/AppCheck`** *(Header: `X-BRIDGE-KEY`)* — Receives Desktop Bridge heartbeat and broadcasts `ReceiveMessage("ConsoleApp", "BridgeOnline")` over SignalR.

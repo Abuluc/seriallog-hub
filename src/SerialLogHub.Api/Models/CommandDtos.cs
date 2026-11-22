@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using SerialLogHub.Api.Entities;
 
 namespace SerialLogHub.Api.Models;
 
@@ -7,9 +8,11 @@ public class SendCommandRequest
     public int Id { get; set; }
     public string Email { get; set; } = string.Empty;
 
-    // Preserves legacy typo from WhiloggerWEB CommandModel while also accepting "Port"
     [JsonPropertyName("SelecetdPort")]
     public string? SelecetdPort { get; set; }
+
+    [JsonPropertyName("SelectedPort")]
+    public string? SelectedPort { get; set; }
 
     [JsonPropertyName("Port")]
     public string? Port { get; set; }
@@ -23,7 +26,10 @@ public class SendCommandRequest
 
     public string? Response { get; set; }
 
-    public string ResolvedPort => !string.IsNullOrWhiteSpace(SelecetdPort) ? SelecetdPort : (Port ?? string.Empty);
+    public string ResolvedPort =>
+        !string.IsNullOrWhiteSpace(SelectedPort) ? SelectedPort :
+        !string.IsNullOrWhiteSpace(SelecetdPort) ? SelecetdPort :
+        (Port ?? string.Empty);
 }
 
 public class UpdateCommandRequest
@@ -31,6 +37,7 @@ public class UpdateCommandRequest
     public string Email { get; set; } = string.Empty;
     public string? CommandID { get; set; }
     public string Response { get; set; } = string.Empty;
+    public string? Status { get; set; }
 }
 
 public class CommandResponseDto
@@ -45,6 +52,9 @@ public class CommandResponseDto
     [JsonPropertyName("SelecetdPort")]
     public string SelecetdPort { get; set; } = string.Empty;
 
+    [JsonPropertyName("SelectedPort")]
+    public string SelectedPort => SelecetdPort;
+
     [JsonPropertyName("Port")]
     public string Port => SelecetdPort;
 
@@ -53,4 +63,9 @@ public class CommandResponseDto
     public DateTime Timestamp { get; set; }
     public bool IsProcessed { get; set; }
     public string Response { get; set; } = string.Empty;
+    public string Status { get; set; } = CommandLifecycleStatus.Pending;
+    public DateTime? DispatchedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string? ErrorCategory { get; set; }
+    public int AttemptCount { get; set; }
 }

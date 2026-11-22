@@ -2,6 +2,20 @@
 
 All notable changes to **SerialLog Hub** are documented in this file.
 
+## [2.0.0] - 2026-11-22
+
+### Added
+- **.NET 10 LTS Migration:** Migrated `SerialLogHub.Api`, `SerialLogHub.Web`, `SerialLogHub.Desktop`, and `SerialLogHub.Tests` (plus Dockerfiles and GitHub Actions CI) to `.NET 10.0` (`net10.0` / `net10.0-windows`).
+- **Persistent Server-Side Telemetry & Multi-Device Comparison (`TelemetryController`):** Added relational `Devices` and `TelemetryRecords` SQLite tables with composite indexes, automatic `WLB` dump persistence, paginated historical queries (`GET /api/telemetry/history`), multi-device side-by-side comparison (`GET /api/telemetry/compare`), and a **Persistent Server Telemetry Archive & Device Comparison** panel on the Web Dashboard.
+- **Deterministic Statistical Anomaly Detection Engine (`AnomalyDetectionEngine`):** Implemented 6 explainable detection methods across C# and JavaScript: `InvalidReading`, `StaticThreshold`, `SuddenSpike`, `RollingZScore` (Moving Average + Standard Deviation), `SensorDrift`, and `MissingDataGap`.
+- **Comprehensive 45-Test Quality & Security Suite:** Added `AnomalyDetectionEngineTests` and `TelemetryAndSecurityTests` verifying statistical outlier detection, malformed simulator output, BOLA/IDOR blocking, password reset token expiration, and command lifecycle transitions.
+- **Architecture & Engineering Audit Documentation:** Added `CURRENT_ARCHITECTURE_REVIEW.md`, `SECURITY_REVIEW.md`, `COM_BRIDGE_RELIABILITY.md`, `TELEMETRY_STORAGE.md`, `ANOMALY_DETECTION.md`, `SIGNALR_ARCHITECTURE.md`, `ENGINEERING_UPGRADE_PROGRESS.md`, and `FINAL_ENGINEERING_REPORT.md` under `docs/`.
+
+### Security & Reliability
+- **BOLA / Cross-User Protection (`OperatorScopeGuard`):** Enforced `X-OPERATOR-EMAIL` scope validation across `UserController`, `TelemetryController`, and `AuthController` (`403 Forbidden` on cross-user access) and constant-time secret comparison (`CryptographicOperations.FixedTimeEquals`).
+- **Auth Hardening:** Added `"auth-brute-force"` rate-limit policy (`10 req/min` per IP), `POST /api/auth/confirm-reset` token-validated password reset completion, security headers middleware, and non-root Docker execution (`USER $APP_UID`) with `--healthcheck` probes.
+- **Explicit Command Lifecycle & Adaptive Bridge Polling:** Added `Status` (`Pending`, `Dispatched`, `Completed`, `Failed`, `TimedOut`), `DispatchedAt`, `CompletedAt`, `ErrorCategory`, adaptive idle/error polling backoff, and non-idempotent hardware command protection (`WLE1`, `WLH1`, `WLS0`, `WLM`, `WLA`, `WLV1`, `WLG`).
+
 ## [1.3.0] - 2026-11-22
 
 ### Improved

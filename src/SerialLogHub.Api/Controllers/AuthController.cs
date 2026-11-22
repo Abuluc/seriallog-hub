@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using SerialLogHub.Api.Data;
 using SerialLogHub.Api.Entities;
@@ -30,6 +31,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("auth-brute-force")]
     public async Task<IActionResult> Login([FromBody] UserAuthRequest request)
     {
         if (request == null || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.HashedPassword))
@@ -53,6 +55,7 @@ public class AuthController : ControllerBase
 
         if (!_passwordService.VerifyPassword(user.Email, user.HashedPassword, request.HashedPassword))
         {
+            _logger.LogWarning("Failed password authentication attempt for {Email}.", normalizedEmail);
             return Unauthorized("Incorrect password.");
         }
 
@@ -70,6 +73,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("{culture}/register")]
+    [EnableRateLimiting("auth-brute-force")]
     public async Task<IActionResult> Register(string culture, [FromBody] UserAuthRequest request)
     {
         if (request == null ||
@@ -127,6 +131,12 @@ public class AuthController : ControllerBase
             return BadRequest("Email, new username, and current password are required.");
         }
 
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on POST /api/auth/updatename for {TargetEmail}.", request.Email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user account modification is forbidden.");
+        }
+
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
         if (_configuration.GetValue("DemoMode:Enabled", false))
         {
@@ -155,6 +165,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("{culture}/SendResetMail")]
+    [EnableRateLimiting("auth-brute-force")]
     public async Task<IActionResult> SendResetMail(string culture, [FromBody] JsonElement body)
     {
         string? email = ExtractEmailFromBody(body);
@@ -176,7 +187,46 @@ public class AuthController : ControllerBase
         return Ok("Password reset link has been sent.");
     }
 
+    [HttpPost("confirm-reset")]
+    [EnableRateLimiting("auth-brute-force")]
+    public async Task<IActionResult> ConfirmPasswordReset([FromBody] ConfirmPasswordResetRequest request)
+    {
+        if (request == null ||
+            string.IsNullOrWhiteSpace(request.Email) ||
+            string.IsNullOrWhiteSpace(request.ResetToken) ||
+            string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return BadRequest("Email, reset token, and new password are required.");
+        }
+
+        if (request.NewPassword.Length < 6)
+        {
+            return BadRequest("Password must be at least 6 characters long.");
+        }
+
+        string normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+        if (user == null ||
+            string.IsNullOrWhiteSpace(user.ResetPasswordToken) ||
+            string.Equals(user.ResetPasswordToken, "None", StringComparison.OrdinalIgnoreCase) ||
+            user.TokenExpiryTime <= DateTime.UtcNow ||
+            !OperatorScopeGuard.FixedTimeEquals(request.ResetToken.Trim(), user.ResetPasswordToken))
+        {
+            _logger.LogWarning("Rejected invalid or expired password reset token for {Email}.", normalizedEmail);
+            return Unauthorized("Invalid or expired password reset token.");
+        }
+
+        user.HashedPassword = _passwordService.HashForStorage(normalizedEmail, request.NewPassword);
+        user.ResetPasswordToken = "None";
+        user.TokenExpiryTime = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Password reset completed for {Email}.", normalizedEmail);
+        return Ok(new { message = "Password has been reset successfully." });
+    }
+
     [HttpPost("{culture}/resendverificationemail")]
+    [EnableRateLimiting("auth-brute-force")]
     public async Task<IActionResult> ResendVerificationEmail(string culture, [FromBody] JsonElement body)
     {
         string? email = ExtractEmailFromBody(body);
@@ -211,6 +261,12 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(email))
         {
             return BadRequest(new { message = "Email parameter is required." });
+        }
+
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on GET /api/auth/profile for {TargetEmail}.", email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user profile access is forbidden.");
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();

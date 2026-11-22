@@ -8,7 +8,11 @@ public sealed class BridgeEngine
     private readonly SemaphoreSlim _commandLock = new(1, 1);
     private readonly SemaphoreSlim _portSyncLock = new(1, 1);
     private readonly HashSet<string> _completedCommandIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _dispatchedNonIdempotentIds = new(StringComparer.OrdinalIgnoreCase);
     private List<string> _lastPublishedPorts = new();
+    private int _consecutiveEmptyPolls;
+    private int _consecutiveErrorCount;
+    private DateTime _nextPollEarliestUtc = DateTime.MinValue;
 
     public BridgeEngine(
         BridgeApiClient apiClient,
@@ -25,6 +29,22 @@ public sealed class BridgeEngine
     public event Action<string>? LogReceived;
     public event Action<IReadOnlyList<string>>? PortsUpdated;
 
+    /// <summary>
+    /// Returns true if a serial command mutates or erases device state and must NEVER be automatically retried.
+    /// </summary>
+    public static bool IsNonIdempotentPhysicalCommand(string? commandMessage)
+    {
+        if (string.IsNullOrWhiteSpace(commandMessage)) return false;
+        string cmd = commandMessage.Trim().ToUpperInvariant();
+        return cmd.StartsWith("WLE1", StringComparison.Ordinal) || // Flash memory erase
+               cmd.StartsWith("WLH1", StringComparison.Ordinal) || // RTC write
+               cmd.StartsWith("WLS0", StringComparison.Ordinal) || // Delayed start write
+               cmd.StartsWith("WLM", StringComparison.Ordinal) ||  // Alarm threshold write
+               cmd.StartsWith("WLA", StringComparison.Ordinal) ||  // Interval write
+               cmd.StartsWith("WLV1", StringComparison.Ordinal) || // Auto-start trigger
+               cmd.StartsWith("WLG", StringComparison.Ordinal);    // Label write
+    }
+
     public async Task SyncPortsAsync(string userEmail, bool forcePublish = false, CancellationToken ct = default)
     {
         if (!await _portSyncLock.WaitAsync(0, ct))
@@ -34,7 +54,6 @@ public sealed class BridgeEngine
 
         try
         {
-            // Run WMI / SerialPort enumeration off the UI thread
             var physicalPorts = await Task.Run(() => _realTransport.GetAvailablePorts(), ct);
             var ports = new List<string>(physicalPorts);
             if (IncludeVirtualDemoDevice)
@@ -52,6 +71,8 @@ public sealed class BridgeEngine
             if (ok)
             {
                 _lastPublishedPorts = ports;
+                _consecutiveEmptyPolls = 0;
+                _nextPollEarliestUtc = DateTime.MinValue;
                 PortsUpdated?.Invoke(ports);
                 LogReceived?.Invoke($"Synced {ports.Count} COM port(s): {(ports.Count == 0 ? "None" : string.Join(", ", ports))}");
             }
@@ -76,6 +97,11 @@ public sealed class BridgeEngine
 
     public async Task PollAndExecuteNextCommandAsync(string userEmail, CancellationToken ct = default)
     {
+        if (DateTime.UtcNow < _nextPollEarliestUtc)
+        {
+            return;
+        }
+
         if (!await _commandLock.WaitAsync(0, ct))
         {
             return;
@@ -84,15 +110,42 @@ public sealed class BridgeEngine
         try
         {
             var command = await _apiClient.GetPendingCommandAsync(userEmail, ct);
+            _consecutiveErrorCount = 0;
+
             if (command == null)
             {
+                _consecutiveEmptyPolls++;
+                // Adaptive idle backoff: fast polling when active, gentle backoff when idle
+                if (_consecutiveEmptyPolls > 40)
+                {
+                    _nextPollEarliestUtc = DateTime.UtcNow.AddMilliseconds(2500);
+                }
+                else if (_consecutiveEmptyPolls > 15)
+                {
+                    _nextPollEarliestUtc = DateTime.UtcNow.AddMilliseconds(1200);
+                }
                 return;
             }
 
-            // Guard against infinite hardware retries if a previous UpdateCommandResponse failed transiently
+            // Reset adaptive backoff immediately when a command arrives
+            _consecutiveEmptyPolls = 0;
+            _nextPollEarliestUtc = DateTime.MinValue;
+
             if (!string.IsNullOrWhiteSpace(command.CommandId) && _completedCommandIds.Contains(command.CommandId))
             {
                 await _apiClient.UpdateCommandResponseAsync(userEmail, command.CommandId, "Error: Command already processed locally.", ct);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(command.CommandId) &&
+                IsNonIdempotentPhysicalCommand(command.Message) &&
+                !_dispatchedNonIdempotentIds.Add(command.CommandId))
+            {
+                await _apiClient.UpdateCommandResponseAsync(
+                    userEmail,
+                    command.CommandId,
+                    "Error: Non-idempotent hardware command was already dispatched once; duplicate execution blocked for device safety.",
+                    ct);
                 return;
             }
 
@@ -148,7 +201,10 @@ public sealed class BridgeEngine
         }
         catch (Exception ex)
         {
-            LogReceived?.Invoke($"Command poll error: {ex.Message}");
+            _consecutiveErrorCount++;
+            int backoffSeconds = Math.Min(10, 1 << Math.Min(3, _consecutiveErrorCount));
+            _nextPollEarliestUtc = DateTime.UtcNow.AddSeconds(backoffSeconds);
+            LogReceived?.Invoke($"Command poll error (retry in {backoffSeconds}s): {ex.Message}");
         }
         finally
         {

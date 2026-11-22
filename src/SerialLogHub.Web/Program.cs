@@ -4,7 +4,26 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using SerialLogHub.Web.Hubs;
 using SerialLogHub.Web.Services;
 
+if (args.Contains("--healthcheck", StringComparer.OrdinalIgnoreCase))
+{
+    try
+    {
+        using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
+        var resp = await hc.GetAsync("http://127.0.0.1:3000/Login");
+        Environment.Exit(resp.IsSuccessStatusCode ? 0 : 1);
+    }
+    catch
+    {
+        Environment.Exit(1);
+    }
+}
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.ConfigureKestrel(kestrel =>
+{
+    kestrel.Limits.MaxRequestBodySize = 5 * 1024 * 1024;
+});
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<UserConnectionManager>();
@@ -78,6 +97,15 @@ else
 {
     app.UseDeveloperExceptionPage();
 }
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["X-Permitted-Cross-Domain-Policies"] = "none";
+    await next();
+});
 
 app.UseStaticFiles();
 app.UseRouting();

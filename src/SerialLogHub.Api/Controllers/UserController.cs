@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SerialLogHub.Api.Data;
 using SerialLogHub.Api.Entities;
 using SerialLogHub.Api.Models;
+using SerialLogHub.Api.Services;
 
 namespace SerialLogHub.Api.Controllers;
 
@@ -13,11 +14,16 @@ public class UserController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ILogger<UserController> _logger;
+    private readonly AnomalyDetectionEngine _anomalyEngine;
 
-    public UserController(AppDbContext db, ILogger<UserController> logger)
+    public UserController(
+        AppDbContext db,
+        ILogger<UserController> logger,
+        AnomalyDetectionEngine? anomalyEngine = null)
     {
         _db = db;
         _logger = logger;
+        _anomalyEngine = anomalyEngine ?? new AnomalyDetectionEngine();
     }
 
     [HttpPost("updateports")]
@@ -28,30 +34,37 @@ public class UserController : ControllerBase
             return BadRequest("UserEmail is required.");
         }
 
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.UserEmail))
+        {
+            _logger.LogWarning("BOLA attempt blocked on POST /api/user/updateports for {TargetEmail}.", request.UserEmail);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+        }
+
         string normalizedEmail = request.UserEmail.Trim().ToLowerInvariant();
-        var distinctPorts = (request.Ports ?? new List<string>())
+        var cleanPorts = (request.Ports ?? new List<string>())
             .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Distinct()
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        string serialized = JsonSerializer.Serialize(distinctPorts);
-
+        string serializedPorts = JsonSerializer.Serialize(cleanPorts);
         var existing = await _db.UsersPort.FirstOrDefaultAsync(p => p.UserEmail.ToLower() == normalizedEmail);
-        if (existing == null)
+
+        if (existing != null)
+        {
+            existing.Ports = serializedPorts;
+        }
+        else
         {
             _db.UsersPort.Add(new UserPortEntity
             {
                 UserEmail = normalizedEmail,
-                Ports = serialized
+                Ports = serializedPorts
             });
-        }
-        else
-        {
-            existing.Ports = serialized;
         }
 
         await _db.SaveChangesAsync();
-        return Ok(new { message = "Ports updated.", ports = distinctPorts });
+        return Ok("Ports updated successfully.");
     }
 
     [HttpGet("getports")]
@@ -59,26 +72,25 @@ public class UserController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(email))
         {
-            return BadRequest("Email is required.");
+            return BadRequest("Email parameter is required.");
+        }
+
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getports for {TargetEmail}.", email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
-        var record = await _db.UsersPort.AsNoTracking().FirstOrDefaultAsync(p => p.UserEmail.ToLower() == normalizedEmail);
+        var userPort = await _db.UsersPort.AsNoTracking().FirstOrDefaultAsync(p => p.UserEmail.ToLower() == normalizedEmail);
 
-        List<string> ports = new();
-        if (record != null && !string.IsNullOrWhiteSpace(record.Ports))
+        if (userPort == null || string.IsNullOrWhiteSpace(userPort.Ports))
         {
-            try
-            {
-                ports = JsonSerializer.Deserialize<List<string>>(record.Ports) ?? new List<string>();
-            }
-            catch
-            {
-                ports = record.Ports.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-            }
+            return NotFound("No ports found for this user.");
         }
 
-        return Ok(new GetPortsResponse { Ports = ports });
+        var ports = JsonSerializer.Deserialize<List<string>>(userPort.Ports) ?? new List<string>();
+        return Ok(new { ports });
     }
 
     [HttpPost("SendCommand")]
@@ -89,10 +101,24 @@ public class UserController : ControllerBase
             return BadRequest("Email and port are required.");
         }
 
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on POST /api/user/SendCommand for {TargetEmail}.", request.Email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command execution is forbidden.");
+        }
+
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
         string commandId = string.IsNullOrWhiteSpace(request.CommandID)
             ? Guid.NewGuid().ToString()
             : request.CommandID.Trim();
+
+        // Idempotency protection: if the exact CommandID already exists for this user, return the existing record
+        var existingCmd = await _db.Commands
+            .FirstOrDefaultAsync(c => c.Email.ToLower() == normalizedEmail && c.CommandID == commandId);
+        if (existingCmd != null)
+        {
+            return Ok(MapToDto(existingCmd));
+        }
 
         var command = new CommandEntity
         {
@@ -103,7 +129,9 @@ public class UserController : ControllerBase
             Timestamp = request.Timestamp == default ? DateTime.UtcNow : request.Timestamp,
             CommandID = commandId,
             IsProcessed = false,
-            Response = string.IsNullOrWhiteSpace(request.Response) ? "Pending" : request.Response
+            Status = CommandLifecycleStatus.Pending,
+            Response = string.IsNullOrWhiteSpace(request.Response) ? "Pending" : request.Response,
+            AttemptCount = 0
         };
 
         _db.Commands.Add(command);
@@ -120,15 +148,21 @@ public class UserController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(email))
         {
-            return BadRequest("Email is required.");
+            return BadRequest("Email parameter is required.");
+        }
+
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getcommands for {TargetEmail}.", email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command polling is forbidden.");
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
-        DateTime expirationCutoff = DateTime.UtcNow.AddSeconds(-60);
+        DateTime cutoffUtc = DateTime.UtcNow.AddSeconds(-60);
 
-        // Auto-expire stale unprocessed commands so dead-port commands never block later requests
+        // Expire stale pending/dispatched commands older than 60s
         var staleCommands = await _db.Commands
-            .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed && c.Timestamp < expirationCutoff)
+            .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed && c.Timestamp < cutoffUtc)
             .ToListAsync();
 
         if (staleCommands.Count > 0)
@@ -136,24 +170,33 @@ public class UserController : ControllerBase
             foreach (var stale in staleCommands)
             {
                 stale.IsProcessed = true;
+                stale.Status = CommandLifecycleStatus.TimedOut;
+                stale.CompletedAt = DateTime.UtcNow;
+                stale.ErrorCategory = "Expired";
                 stale.Response = "Error: Command expired before bridge execution.";
             }
 
             await _db.SaveChangesAsync();
+            _logger.LogInformation("Expired {Count} stale command(s) for {Email}.", staleCommands.Count, normalizedEmail);
         }
 
-        var pending = await _db.Commands
-            .AsNoTracking()
+        var nextCommand = await _db.Commands
             .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed)
             .OrderBy(c => c.Id)
             .FirstOrDefaultAsync();
 
-        if (pending == null)
+        if (nextCommand == null)
         {
             return NotFound("No pending commands.");
         }
 
-        return Ok(MapToDto(pending));
+        // Transition lifecycle: Pending -> Dispatched
+        nextCommand.Status = CommandLifecycleStatus.Dispatched;
+        nextCommand.DispatchedAt ??= DateTime.UtcNow;
+        nextCommand.AttemptCount++;
+        await _db.SaveChangesAsync();
+
+        return Ok(MapToDto(nextCommand));
     }
 
     [HttpPost("UpdateCommand")]
@@ -161,54 +204,82 @@ public class UserController : ControllerBase
     {
         if (request == null || string.IsNullOrWhiteSpace(request.Email))
         {
-            return BadRequest("Email is required.");
+            return BadRequest("Invalid update request.");
+        }
+
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on POST /api/user/UpdateCommand for {TargetEmail}.", request.Email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command update is forbidden.");
         }
 
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        CommandEntity? command = null;
 
-        CommandEntity? command;
         if (!string.IsNullOrWhiteSpace(request.CommandID))
         {
             command = await _db.Commands
                 .FirstOrDefaultAsync(c => c.Email.ToLower() == normalizedEmail && c.CommandID == request.CommandID);
         }
-        else
-        {
-            command = await _db.Commands
-                .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed)
-                .OrderBy(c => c.Id)
-                .FirstOrDefaultAsync();
-        }
+
+        command ??= await _db.Commands
+            .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed)
+            .OrderBy(c => c.Id)
+            .FirstOrDefaultAsync();
 
         if (command == null)
         {
-            return NotFound("No matching pending command found.");
+            return NotFound("Command not found.");
         }
 
-        // Prevent duplicate history entries or overwriting already-processed commands
         if (command.IsProcessed)
         {
             return Ok(MapToDto(command));
         }
 
-        command.Response = request.Response ?? string.Empty;
+        string resp = request.Response ?? string.Empty;
+        bool isErr = resp.StartsWith("Error:", StringComparison.OrdinalIgnoreCase);
+        bool isTimeout = resp.Contains("timed out", StringComparison.OrdinalIgnoreCase);
+
+        command.Response = resp;
         command.IsProcessed = true;
+        command.CompletedAt = DateTime.UtcNow;
+        command.Status = !string.IsNullOrWhiteSpace(request.Status)
+            ? request.Status
+            : isTimeout
+                ? CommandLifecycleStatus.TimedOut
+                : isErr
+                    ? CommandLifecycleStatus.Failed
+                    : CommandLifecycleStatus.Completed;
+
+        command.ErrorCategory = !isErr ? "None" :
+            isTimeout ? "Timeout" :
+            resp.Contains("Could not find file", StringComparison.OrdinalIgnoreCase) ? "PortNotFound" :
+            "DeviceError";
 
         _db.CommandHistories.Add(new CommandHistoryEntity
         {
             Email = command.Email,
+            CommandID = command.CommandID,
             Port = command.SelecetdPort,
             BaudRate = command.BaudRate,
             Message = command.Message,
-            Timestamp = command.Timestamp,
-            CommandID = command.CommandID,
-            IsProcessed = true,
-            Response = command.Response
+            Response = command.Response,
+            Timestamp = DateTime.UtcNow
         });
+
+        // Automatically persist server-side telemetry when a WLB dump succeeds
+        if (!isErr &&
+            command.Message.Trim().Equals("WLB", StringComparison.OrdinalIgnoreCase) &&
+            resp.Contains("CMD,OK,", StringComparison.OrdinalIgnoreCase))
+        {
+            await PersistWlbTelemetrySafeAsync(normalizedEmail, command.SelecetdPort, resp);
+        }
 
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Completed command {CommandId} for {Email}.", command.CommandID, command.Email);
+        _logger.LogInformation("Completed command {CommandId} for {Email} with status {Status}.",
+            command.CommandID, command.Email, command.Status);
         return Ok(MapToDto(command));
     }
 
@@ -218,6 +289,12 @@ public class UserController : ControllerBase
         if (string.IsNullOrWhiteSpace(email))
         {
             return BadRequest("Email is required.");
+        }
+
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/history for {TargetEmail}.", email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user history access is forbidden.");
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -252,6 +329,12 @@ public class UserController : ControllerBase
             return BadRequest("Email and CommandID are required.");
         }
 
+        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        {
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getresponses for {TargetEmail}.", email);
+            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command response access is forbidden.");
+        }
+
         string normalizedEmail = email.Trim().ToLowerInvariant();
         var command = await _db.Commands
             .AsNoTracking()
@@ -265,6 +348,63 @@ public class UserController : ControllerBase
         return Ok(MapToDto(command));
     }
 
+    private async Task PersistWlbTelemetrySafeAsync(string normalizedEmail, string portName, string rawWlbResponse)
+    {
+        try
+        {
+            var samples = _anomalyEngine.ParseDataLoggerPayload(rawWlbResponse);
+            if (samples.Count == 0) return;
+
+            var device = await _db.Devices
+                .FirstOrDefaultAsync(d => d.UserEmail.ToLower() == normalizedEmail && d.PortName == portName);
+
+            if (device == null)
+            {
+                device = new DeviceEntity
+                {
+                    UserEmail = normalizedEmail,
+                    PortName = portName,
+                    DeviceName = $"DataLogger ({portName})",
+                    SerialNumber = $"SN-{portName.Replace(" ", "")}",
+                    CreatedAt = DateTime.UtcNow,
+                    LastSeenUtc = DateTime.UtcNow
+                };
+                _db.Devices.Add(device);
+                await _db.SaveChangesAsync();
+            }
+            else
+            {
+                device.LastSeenUtc = DateTime.UtcNow;
+            }
+
+            var evaluations = _anomalyEngine.EvaluateSeries(samples);
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var s = samples[i];
+                var eval = evaluations[i];
+                _db.TelemetryRecords.Add(new TelemetryRecordEntity
+                {
+                    DeviceId = device.Id,
+                    UserEmail = normalizedEmail,
+                    PortName = portName,
+                    Temperature = s.Temperature,
+                    Humidity = s.Humidity,
+                    RecordedAt = s.RecordedAt,
+                    IngestedAt = DateTime.UtcNow,
+                    IsAnomaly = eval.IsAnomaly,
+                    AnomalySeverity = eval.Severity,
+                    AnomalyMethod = eval.DetectionMethod,
+                    AnomalyExplanation = eval.Explanation,
+                    RawPayload = s.RawPayload
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal error persisting WLB telemetry dump for {Email}.", normalizedEmail);
+        }
+    }
+
     private static CommandResponseDto MapToDto(CommandEntity entity) => new()
     {
         Id = entity.Id,
@@ -275,6 +415,11 @@ public class UserController : ControllerBase
         Message = entity.Message,
         Timestamp = entity.Timestamp,
         IsProcessed = entity.IsProcessed,
-        Response = entity.Response
+        Response = entity.Response,
+        Status = entity.Status,
+        DispatchedAt = entity.DispatchedAt,
+        CompletedAt = entity.CompletedAt,
+        ErrorCategory = entity.ErrorCategory,
+        AttemptCount = entity.AttemptCount
     };
 }

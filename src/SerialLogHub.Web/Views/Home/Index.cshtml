@@ -270,6 +270,31 @@
     </div>
 </section>
 
+<!-- Persistent Server-Side Telemetry Archive & Multi-Device Comparison -->
+<section class="slh-card" style="margin-bottom: 24px;">
+    <div class="slh-card-header">
+        <div class="slh-card-title">
+            <i class="fa-solid fa-database"></i>
+            <span>Persistent Server Telemetry Archive &amp; Device Comparison (SQLite)</span>
+        </div>
+        <div class="slh-toolbar" style="margin-bottom: 0;">
+            <select id="serverDeviceSelect" class="slh-select" style="width: 240px; padding: 6px 10px; font-size: 0.82rem;">
+                <option value="">Loading server devices...</option>
+            </select>
+            <button type="button" id="loadServerTelemetryBtn" class="slh-btn slh-btn-primary slh-btn-sm">
+                <i class="fa-solid fa-cloud-arrow-down"></i> Load Server History
+            </button>
+            <select id="compareDeviceSelect" class="slh-select" style="width: 240px; padding: 6px 10px; font-size: 0.82rem;">
+                <option value="">Compare with device...</option>
+            </select>
+            <button type="button" id="compareDevicesBtn" class="slh-btn slh-btn-outline slh-btn-sm">
+                <i class="fa-solid fa-scale-balanced"></i> Compare Devices
+            </button>
+        </div>
+    </div>
+    <div id="deviceComparisonPanel" style="display: none; margin-top: 12px; padding: 12px 16px; background: #f8fafc; border: 1px solid var(--slh-border); border-radius: 10px; font-size: 0.83rem;"></div>
+</section>
+
 <!-- Command Audit History & Previous Uploads -->
 <section class="slh-grid-main" style="grid-template-columns: 1fr 1fr;">
     <div class="slh-card">

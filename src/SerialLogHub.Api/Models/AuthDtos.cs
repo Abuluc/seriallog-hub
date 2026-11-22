@@ -19,6 +19,13 @@ public class UpdateNameRequest
     public string? CurrentPassword { get; set; }
 }
 
+public class ConfirmPasswordResetRequest
+{
+    public string? Email { get; set; }
+    public string? ResetToken { get; set; }
+    public string? NewPassword { get; set; }
+}
+
 public class UserProfileResponse
 {
     public string Email { get; set; } = string.Empty;

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SerialLogHub.Api.Data;
+using SerialLogHub.Api.Services;
 
 namespace SerialLogHub.Api.Middleware;
 
@@ -46,11 +47,19 @@ public class ApiKeyMiddleware
         string providedKey = extractedKey.ToString();
         string? configuredKey = _configuration["ApiSecurity:ApiKey"];
 
-        bool matchesConfigured = !string.IsNullOrWhiteSpace(configuredKey) &&
-                                 string.Equals(providedKey, configuredKey, StringComparison.Ordinal);
+        bool matchesConfigured = OperatorScopeGuard.FixedTimeEquals(providedKey, configuredKey);
 
-        bool matchesDatabase = matchesConfigured || await dbContext.ApiKeys
-            .AnyAsync(k => k.Key == providedKey && k.ExpiresAt > DateTime.UtcNow);
+        bool matchesDatabase = matchesConfigured;
+        if (!matchesDatabase)
+        {
+            var activeKeys = await dbContext.ApiKeys
+                .AsNoTracking()
+                .Where(k => k.ExpiresAt > DateTime.UtcNow)
+                .Select(k => k.Key)
+                .ToListAsync();
+
+            matchesDatabase = activeKeys.Any(k => OperatorScopeGuard.FixedTimeEquals(providedKey, k));
+        }
 
         if (!matchesDatabase)
         {

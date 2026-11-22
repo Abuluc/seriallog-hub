@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -9,6 +10,13 @@ using SerialLogHub.Web.Models;
 using SerialLogHub.Web.Services;
 
 namespace SerialLogHub.Web.Controllers;
+
+public sealed class ServerIngestPayload
+{
+    public string PortName { get; set; } = string.Empty;
+    public string? DeviceName { get; set; }
+    public string RawCsvPayload { get; set; } = string.Empty;
+}
 
 public class HomeController : Controller
 {
@@ -58,10 +66,6 @@ public class HomeController : Controller
         return View(model);
     }
 
-    /// <summary>
-    /// Webhook called by the Desktop COM Port Bridge to report online status.
-    /// Protected by X-BRIDGE-KEY (or X-API-KEY) header.
-    /// </summary>
     [HttpPost]
     [AllowAnonymous]
     public async Task<IActionResult> AppCheck([FromBody] AppHealthPayload payload, CancellationToken ct)
@@ -92,10 +96,6 @@ public class HomeController : Controller
         return BadRequest("Invalid app name.");
     }
 
-    /// <summary>
-    /// Webhook called by the Desktop COM Port Bridge to stream serial log reading progress and final payload.
-    /// Protected by X-BRIDGE-KEY (or X-API-KEY) header.
-    /// </summary>
     [HttpPost]
     [AllowAnonymous]
     public async Task<IActionResult> waitresponse([FromBody] WaitResponsePayload payload, CancellationToken ct)
@@ -278,6 +278,56 @@ public class HomeController : Controller
         return Content(json, "application/json", Encoding.UTF8);
     }
 
+    [Authorize]
+    [HttpGet]
+    public async Task<IActionResult> ServerDevices(CancellationToken ct = default)
+    {
+        string? userEmail = CurrentUserEmail;
+        if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
+        string json = await _apiClient.GetDevicesJsonAsync(userEmail, ct);
+        return Content(json, "application/json", Encoding.UTF8);
+    }
+
+    [Authorize]
+    [HttpGet]
+    public async Task<IActionResult> ServerTelemetryHistory(
+        int? deviceId = null,
+        DateTime? fromUtc = null,
+        DateTime? toUtc = null,
+        bool anomaliesOnly = false,
+        CancellationToken ct = default)
+    {
+        string? userEmail = CurrentUserEmail;
+        if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
+        string json = await _apiClient.GetTelemetryHistoryJsonAsync(userEmail, deviceId, fromUtc, toUtc, anomaliesOnly, ct);
+        return Content(json, "application/json", Encoding.UTF8);
+    }
+
+    [Authorize]
+    [HttpGet]
+    public async Task<IActionResult> CompareDevices(int deviceA, int deviceB, CancellationToken ct = default)
+    {
+        string? userEmail = CurrentUserEmail;
+        if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
+        string json = await _apiClient.CompareDevicesJsonAsync(userEmail, deviceA, deviceB, ct);
+        return Content(json, "application/json", Encoding.UTF8);
+    }
+
+    [Authorize]
+    [HttpPost]
+    public async Task<IActionResult> IngestTelemetry([FromBody] ServerIngestPayload payload, CancellationToken ct = default)
+    {
+        string? userEmail = CurrentUserEmail;
+        if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
+        if (payload == null || string.IsNullOrWhiteSpace(payload.PortName) || string.IsNullOrWhiteSpace(payload.RawCsvPayload))
+        {
+            return BadRequest(new { message = "PortName and RawCsvPayload are required." });
+        }
+
+        string json = await _apiClient.IngestTelemetryJsonAsync(userEmail, payload.PortName, payload.DeviceName, payload.RawCsvPayload, ct);
+        return Content(json, "application/json", Encoding.UTF8);
+    }
+
     private static bool IsPlaceholderPort(string? port)
     {
         if (string.IsNullOrWhiteSpace(port)) return true;
@@ -316,50 +366,36 @@ public class HomeController : Controller
         };
 
         var response = await _apiClient.SendAndWaitForResponseAsync(command, ct);
-        return Json(new
-        {
-            status = response != null ? "success" : "timeout",
-            message = response != null ? "Delayed start configured." : "Timed out waiting for device.",
-            Result = response?.Response
-        });
+        return response != null
+            ? Json(new { status = "success", message = "Delayed start configured.", ResponseMessage = response })
+            : Json(new { status = "timeout", message = "No response from device.", ResponseMessage = "" });
     }
 
     [Authorize]
-    [HttpGet("Home/GetCookie")]
-    public IActionResult GetCookie(string cookieheader)
+    [HttpPost]
+    public JsonResult UpdatePorts([FromBody] SerialPortModel model)
     {
-        if (string.Equals(cookieheader, "Connection", StringComparison.OrdinalIgnoreCase) &&
-            Request.Cookies.TryGetValue("Connection", out var cookieValue))
+        if (model.AvailablePorts.Count > 0)
         {
-            return Json(new { success = true, value = cookieValue });
+            return Json(new { success = true, message = "Ports updated." });
         }
 
-        return Json(new { success = false, message = "Cookie not found." });
+        return Json(new { success = false, message = "Port list is empty." });
     }
 
     [Authorize]
-    [HttpGet("Home/Disconnect")]
     public IActionResult Disconnect()
     {
         Response.Cookies.Delete("Connection");
-        return Ok(new { status = "disconnected" });
+        return RedirectToAction("Index", "Home");
     }
 
-    /// <summary>
-    /// Generates clearly labeled synthetic sample DataLogger CSV records in Demo Mode
-    /// matching the real hardware column format (row[2]=Temp, row[3]=Humidity, row[4..9]=Y,M,D,h,m,s).
-    /// </summary>
     [Authorize]
-    [HttpGet("Home/DemoSampleCsv")]
+    [HttpGet]
     public IActionResult DemoSampleCsv()
     {
-        if (!_configuration.GetValue("DemoMode:Enabled", false))
-        {
-            return NotFound("Demo mode is disabled.");
-        }
-
         var sb = new StringBuilder();
-        sb.AppendLine("CMD,DATA,Temp,Humidity,Year,Month,Day,Hour,Minute,Second");
+        sb.AppendLine("CMD,OK,LSD,");
 
         var start = DateTime.UtcNow.AddMinutes(-40);
         var rng = new Random(42);
@@ -369,7 +405,6 @@ public class HomeController : Controller
             double temp = Math.Round(22.4 + Math.Sin(i / 10.0) * 1.8 + (rng.NextDouble() - 0.5) * 0.4, 2);
             double hum = Math.Round(48.5 + Math.Cos(i / 12.0) * 4.2 + (rng.NextDouble() - 0.5) * 0.8, 2);
 
-            // Inject 2 realistic sensor spike anomalies so the anomaly filter can be demonstrated
             if (i == 45) temp = 31.8;
             if (i == 82) hum = 76.4;
 
@@ -422,19 +457,29 @@ public class HomeController : Controller
         string? expectedApiKey = _configuration["ApiSettings:ApiKey"];
 
         if (Request.Headers.TryGetValue("X-BRIDGE-KEY", out var bridgeHeader) &&
-            !string.IsNullOrWhiteSpace(expectedBridgeKey) &&
-            string.Equals(bridgeHeader.ToString(), expectedBridgeKey, StringComparison.Ordinal))
+            FixedTimeEquals(bridgeHeader.ToString(), expectedBridgeKey))
         {
             return true;
         }
 
         if (Request.Headers.TryGetValue("X-API-KEY", out var apiHeader) &&
-            !string.IsNullOrWhiteSpace(expectedApiKey) &&
-            string.Equals(apiHeader.ToString(), expectedApiKey, StringComparison.Ordinal))
+            FixedTimeEquals(apiHeader.ToString(), expectedApiKey))
         {
             return true;
         }
 
         return false;
+    }
+
+    private static bool FixedTimeEquals(string? provided, string? expected)
+    {
+        if (string.IsNullOrEmpty(provided) || string.IsNullOrEmpty(expected))
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(provided),
+            Encoding.UTF8.GetBytes(expected));
     }
 }

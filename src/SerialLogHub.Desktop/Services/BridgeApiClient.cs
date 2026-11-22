@@ -58,19 +58,30 @@ public sealed class BridgeApiClient : IDisposable
 
     public async Task<bool> UpdatePortsAsync(string email, IReadOnlyList<string> ports, CancellationToken ct = default)
     {
+        string cleanEmail = email.Trim();
         var payload = new UserPortUpdateRequest
         {
-            UserEmail = email.Trim(),
+            UserEmail = cleanEmail,
             Ports = ports.ToList()
         };
 
-        using var response = await _apiHttpClient.PostAsJsonAsync("user/updateports", payload, ct);
+        using var req = new HttpRequestMessage(HttpMethod.Post, "user/updateports")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+
+        using var response = await _apiHttpClient.SendAsync(req, ct);
         return response.IsSuccessStatusCode;
     }
 
     public async Task<DeviceCommandDto?> GetPendingCommandAsync(string email, CancellationToken ct = default)
     {
-        using var response = await _apiHttpClient.GetAsync($"user/getcommands?email={Uri.EscapeDataString(email.Trim())}", ct);
+        string cleanEmail = email.Trim();
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"user/getcommands?email={Uri.EscapeDataString(cleanEmail)}");
+        req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+
+        using var response = await _apiHttpClient.SendAsync(req, ct);
         if (!response.IsSuccessStatusCode)
         {
             return null;
@@ -79,17 +90,53 @@ public sealed class BridgeApiClient : IDisposable
         return await response.Content.ReadFromJsonAsync<DeviceCommandDto>(JsonOptions, ct);
     }
 
+    /// <summary>
+    /// Reports a completed command response back to the API with bounded exponential backoff
+    /// so transient network hiccups do not cause lost responses or physical command re-execution.
+    /// </summary>
     public async Task<bool> UpdateCommandResponseAsync(string email, string? commandId, string responseText, CancellationToken ct = default)
     {
+        string cleanEmail = email.Trim();
         var payload = new CommandUpdateRequest
         {
-            Email = email.Trim(),
+            Email = cleanEmail,
             CommandId = commandId,
             Response = responseText
         };
 
-        using var response = await _apiHttpClient.PostAsJsonAsync("user/UpdateCommand", payload, ct);
-        return response.IsSuccessStatusCode;
+        int[] backoffMs = { 0, 250, 750 };
+        for (int attempt = 0; attempt < backoffMs.Length; attempt++)
+        {
+            if (backoffMs[attempt] > 0)
+            {
+                await Task.Delay(backoffMs[attempt], ct);
+            }
+
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Post, "user/UpdateCommand")
+                {
+                    Content = JsonContent.Create(payload)
+                };
+                req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+
+                using var response = await _apiHttpClient.SendAsync(req, ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    return true;
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Retry on transient transport error
+            }
+        }
+
+        return false;
     }
 
     public async Task<bool> SendWebHeartbeatAsync(string email, CancellationToken ct = default)
