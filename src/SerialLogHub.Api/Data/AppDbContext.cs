@@ -69,7 +69,7 @@ public class AppDbContext : DbContext
             entity.ToTable("TelemetryRecords");
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.UserEmail, e.RecordedAt });
-            entity.HasIndex(e => new { e.DeviceId, e.RecordedAt });
+            entity.HasIndex(e => new { e.DeviceId, e.RecordedAt }).IsUnique();
             entity.HasOne(e => e.Device)
                 .WithMany(d => d.TelemetryRecords)
                 .HasForeignKey(e => e.DeviceId)

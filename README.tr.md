@@ -6,7 +6,7 @@
 [![.NET 10 LTS](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-10.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
 [![EF Core SQLite](https://img.shields.io/badge/EF%20Core%2010-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
-[![xUnit](https://img.shields.io/badge/Tests-45%2F45%20xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
+[![xUnit](https://img.shields.io/badge/Tests-52%2F52%20xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
 [![Docker](https://img.shields.io/badge/Deployment-Docker%20%2B%20Render-2496ED?logo=docker&logoColor=white)](deployment/docker-compose.yml)
 
 ## İçindekiler
@@ -85,7 +85,7 @@ Ayrıntılı akış diyagramları için [docs/architecture/ARCHITECTURE.md](docs
 | **Backend API** | C#, .NET 10 LTS, ASP.NET Core Web API, EF Core 10, SQLite, Swagger/OpenAPI, Dahili Rate Limiter |
 | **Web Dashboard** | ASP.NET Core 10 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
 | **Masaüstü COM Köprüsü** | .NET 10 Windows Forms (`net10.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
-| **Test ve Dağıtım** | xUnit (45 test), GitHub Actions CI, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
+| **Test ve Dağıtım** | xUnit (52 test), GitHub Actions CI, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
 
 ---
 
@@ -196,7 +196,7 @@ Tüm endpoint sözleşmeleri ve SignalR Hub detayları [docs/api/API_DOCUMENTATI
 
 ## 13. Testler
 
-- **Otomatik Birim ve Entegrasyon Testleri (`dotnet test SerialLogHub.sln`):** **45/45 xUnit testi başarılı** (`PasswordSecurityServiceTests`, `SerialTransportTests`, `UserControllerTests`, `WebLayerTests`, `AnomalyDetectionEngineTests`, `TelemetryAndSecurityTests`).
+- **Otomatik Birim ve Entegrasyon Testleri (`dotnet test SerialLogHub.sln`):** **52/52 xUnit testi başarılı** (`PasswordSecurityServiceTests`, `SerialTransportTests`, `UserControllerTests`, `WebLayerTests`, `AnomalyDetectionEngineTests`, `TelemetryAndSecurityTests`).
 - **3 Katmanlı Uçtan Uca Entegrasyon Testi:** `SerialLogHub.Api` + `SerialLogHub.Web` + `SerialLogHub.Desktop` birlikte çalıştırılarak kimlik doğrulama, WMI + sanal port eşitlemesi, `TEST`, `WLJ`, `WLG`/`WLW`, `WLH0` ve `WLB` 60 satırlık veri akışı doğrulandı.
 - **Tarayıcı Arayüz Doğrulaması:** Login, Dashboard, uPlot grafiği, Anomali filtresi, Sanal COM bağlantısı ve Cihaz Konfigürasyon ekranlarında sıfır tarayıcı konsol hatası doğrulandı.
 

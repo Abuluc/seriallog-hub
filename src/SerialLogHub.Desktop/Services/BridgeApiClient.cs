@@ -16,9 +16,13 @@ public sealed class BridgeApiClient : IDisposable
 
     private readonly HttpClient _apiHttpClient;
     private readonly HttpClient _webHttpClient;
+    private readonly string _apiKey;
+    private string? _operatorToken;
 
     public BridgeApiClient(BridgeConfiguration config)
     {
+        _apiKey = config.ApiKey ?? string.Empty;
+
         string apiBase = config.ApiBaseUrl.EndsWith('/') ? config.ApiBaseUrl : config.ApiBaseUrl + "/";
         _apiHttpClient = new HttpClient { BaseAddress = new Uri(apiBase), Timeout = TimeSpan.FromSeconds(15) };
         _apiHttpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -42,6 +46,26 @@ public sealed class BridgeApiClient : IDisposable
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
+    private void AttachOperatorCredentials(HttpRequestMessage req, string email)
+    {
+        string cleanEmail = email.Trim().ToLowerInvariant();
+        req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+
+        if (!string.IsNullOrWhiteSpace(_operatorToken))
+        {
+            req.Headers.Add("X-OPERATOR-TOKEN", _operatorToken);
+        }
+        else if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
+            long unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            byte[] hmac = HMACSHA256.HashData(
+                Encoding.UTF8.GetBytes(_apiKey),
+                Encoding.UTF8.GetBytes($"{cleanEmail}|{unixSeconds}"));
+            req.Headers.Add("X-OPERATOR-TIMESTAMP", unixSeconds.ToString());
+            req.Headers.Add("X-OPERATOR-PROOF", Convert.ToHexString(hmac).ToLowerInvariant());
+        }
+    }
+
     public async Task<(bool Success, string Message)> LoginAsync(string email, string username, string password, CancellationToken ct = default)
     {
         var payload = new UserCredentialsRequest
@@ -53,6 +77,24 @@ public sealed class BridgeApiClient : IDisposable
 
         using var response = await _apiHttpClient.PostAsJsonAsync("Auth/login", payload, ct);
         string body = await response.Content.ReadAsStringAsync(ct);
+
+        if (response.IsSuccessStatusCode)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("operatorToken", out var tokenProp) &&
+                    !string.IsNullOrWhiteSpace(tokenProp.GetString()))
+                {
+                    _operatorToken = tokenProp.GetString();
+                }
+            }
+            catch
+            {
+                // Keep HMAC fallback if response JSON has no operatorToken
+            }
+        }
+
         return (response.IsSuccessStatusCode, body);
     }
 
@@ -69,7 +111,7 @@ public sealed class BridgeApiClient : IDisposable
         {
             Content = JsonContent.Create(payload)
         };
-        req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+        AttachOperatorCredentials(req, cleanEmail);
 
         using var response = await _apiHttpClient.SendAsync(req, ct);
         return response.IsSuccessStatusCode;
@@ -79,7 +121,7 @@ public sealed class BridgeApiClient : IDisposable
     {
         string cleanEmail = email.Trim();
         using var req = new HttpRequestMessage(HttpMethod.Get, $"user/getcommands?email={Uri.EscapeDataString(cleanEmail)}");
-        req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+        AttachOperatorCredentials(req, cleanEmail);
 
         using var response = await _apiHttpClient.SendAsync(req, ct);
         if (!response.IsSuccessStatusCode)
@@ -90,10 +132,6 @@ public sealed class BridgeApiClient : IDisposable
         return await response.Content.ReadFromJsonAsync<DeviceCommandDto>(JsonOptions, ct);
     }
 
-    /// <summary>
-    /// Reports a completed command response back to the API with bounded exponential backoff
-    /// so transient network hiccups do not cause lost responses or physical command re-execution.
-    /// </summary>
     public async Task<bool> UpdateCommandResponseAsync(string email, string? commandId, string responseText, CancellationToken ct = default)
     {
         string cleanEmail = email.Trim();
@@ -118,7 +156,7 @@ public sealed class BridgeApiClient : IDisposable
                 {
                     Content = JsonContent.Create(payload)
                 };
-                req.Headers.Add("X-OPERATOR-EMAIL", cleanEmail);
+                AttachOperatorCredentials(req, cleanEmail);
 
                 using var response = await _apiHttpClient.SendAsync(req, ct);
                 if (response.IsSuccessStatusCode)

@@ -28,18 +28,24 @@ public sealed class TelemetryAnalyzeRequest
 [Route("api/[controller]")]
 public class TelemetryController : ControllerBase
 {
+    public const int MaxSamplesPerIngest = 5000;
+    public const int MaxRawPayloadCharacters = 2 * 1024 * 1024; // 2 MB string bound
+
     private readonly AppDbContext _db;
     private readonly AnomalyDetectionEngine _anomalyEngine;
     private readonly ILogger<TelemetryController> _logger;
+    private readonly IConfiguration? _configuration;
 
     public TelemetryController(
         AppDbContext db,
         AnomalyDetectionEngine anomalyEngine,
-        ILogger<TelemetryController> logger)
+        ILogger<TelemetryController> logger,
+        IConfiguration? configuration = null)
     {
         _db = db;
         _anomalyEngine = anomalyEngine;
         _logger = logger;
+        _configuration = configuration;
     }
 
     [HttpGet("devices")]
@@ -50,10 +56,11 @@ public class TelemetryController : ControllerBase
             return BadRequest("Email is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/telemetry/devices for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/telemetry/devices for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -85,25 +92,43 @@ public class TelemetryController : ControllerBase
             return BadRequest("Email and PortName are required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, request.Email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on POST /api/telemetry/ingest for {TargetEmail}.", request.Email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on POST /api/telemetry/ingest for {TargetEmail}: {Reason}", request.Email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
+        }
+
+        if (!string.IsNullOrEmpty(request.RawCsvPayload) && request.RawCsvPayload.Length > MaxRawPayloadCharacters)
+        {
+            return BadRequest($"RawCsvPayload exceeds the {MaxRawPayloadCharacters} character limit.");
         }
 
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
         string cleanPort = request.PortName.Trim();
 
-        List<TelemetryInputSample> samples = request.Samples ?? new List<TelemetryInputSample>();
-        if (samples.Count == 0 && !string.IsNullOrWhiteSpace(request.RawCsvPayload))
+        List<TelemetryInputSample> rawSamples = request.Samples ?? new List<TelemetryInputSample>();
+        if (rawSamples.Count == 0 && !string.IsNullOrWhiteSpace(request.RawCsvPayload))
         {
-            samples = _anomalyEngine.ParseDataLoggerPayload(request.RawCsvPayload);
+            rawSamples = _anomalyEngine.ParseDataLoggerPayload(request.RawCsvPayload);
         }
 
-        if (samples.Count == 0)
+        if (rawSamples.Count == 0)
         {
             return BadRequest("No valid DataLogger telemetry samples found in payload.");
         }
+
+        if (rawSamples.Count > MaxSamplesPerIngest)
+        {
+            return BadRequest($"Ingestion batch of {rawSamples.Count} samples exceeds the maximum limit of {MaxSamplesPerIngest} samples per request.");
+        }
+
+        // 1. In-batch deduplication and chronological ordering
+        var samples = rawSamples
+            .GroupBy(s => s.RecordedAt)
+            .Select(g => g.First())
+            .OrderBy(s => s.RecordedAt)
+            .ToList();
 
         var device = await _db.Devices
             .FirstOrDefaultAsync(d => d.UserEmail.ToLower() == normalizedEmail && d.PortName == cleanPort);
@@ -131,15 +156,20 @@ public class TelemetryController : ControllerBase
             }
         }
 
-        var evaluations = _anomalyEngine.EvaluateSeries(samples, request.Config);
-        var existingTimestamps = (await _db.TelemetryRecords
+        // 2. Bounded time-window lookup: query ONLY existing timestamps within [minTs, maxTs] of the incoming batch
+        // using the composite unique index IX_TelemetryRecords_DeviceId_RecordedAt (never loading full device history!)
+        DateTime minTs = samples[0].RecordedAt;
+        DateTime maxTs = samples[^1].RecordedAt;
+
+        var existingInWindow = (await _db.TelemetryRecords
             .AsNoTracking()
-            .Where(r => r.DeviceId == device.Id)
+            .Where(r => r.DeviceId == device.Id && r.RecordedAt >= minTs && r.RecordedAt <= maxTs)
             .Select(r => r.RecordedAt)
             .ToListAsync())
             .ToHashSet();
 
-        int inserted = 0;
+        var evaluations = _anomalyEngine.EvaluateSeries(samples, request.Config);
+        var toInsert = new List<TelemetryRecordEntity>(samples.Count);
         int anomalyCount = 0;
 
         for (int i = 0; i < samples.Count; i++)
@@ -148,13 +178,12 @@ public class TelemetryController : ControllerBase
             var eval = evaluations[i];
             if (eval.IsAnomaly) anomalyCount++;
 
-            if (existingTimestamps.Contains(s.RecordedAt))
+            if (!existingInWindow.Add(s.RecordedAt))
             {
                 continue;
             }
 
-            existingTimestamps.Add(s.RecordedAt);
-            _db.TelemetryRecords.Add(new TelemetryRecordEntity
+            toInsert.Add(new TelemetryRecordEntity
             {
                 DeviceId = device.Id,
                 UserEmail = normalizedEmail,
@@ -169,13 +198,17 @@ public class TelemetryController : ControllerBase
                 AnomalyExplanation = eval.Explanation,
                 RawPayload = s.RawPayload
             });
-            inserted++;
+        }
+
+        if (toInsert.Count > 0)
+        {
+            _db.TelemetryRecords.AddRange(toInsert);
         }
 
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Ingested {Inserted} new telemetry rows ({Anomalies} anomalies) for {Email} device {DeviceId}.",
-            inserted, anomalyCount, normalizedEmail, device.Id);
+            toInsert.Count, anomalyCount, normalizedEmail, device.Id);
 
         return Ok(new
         {
@@ -183,7 +216,7 @@ public class TelemetryController : ControllerBase
             deviceName = device.DeviceName,
             portName = device.PortName,
             totalEvaluated = samples.Count,
-            insertedCount = inserted,
+            insertedCount = toInsert.Count,
             anomalyCount,
             evaluations
         });
@@ -204,10 +237,11 @@ public class TelemetryController : ControllerBase
             return BadRequest("Email is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/telemetry/history for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/telemetry/history for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -289,9 +323,10 @@ public class TelemetryController : ControllerBase
             return BadRequest("Email is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -354,6 +389,11 @@ public class TelemetryController : ControllerBase
         if (samples.Count == 0)
         {
             return BadRequest("No valid telemetry samples provided.");
+        }
+
+        if (samples.Count > MaxSamplesPerIngest)
+        {
+            return BadRequest($"Sample count exceeds maximum of {MaxSamplesPerIngest}.");
         }
 
         var evaluations = _anomalyEngine.EvaluateSeries(samples, request.Config);

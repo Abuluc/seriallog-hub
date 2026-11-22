@@ -118,7 +118,7 @@ SerialLog Hub is a three-tier industrial telemetry and RS-232/USB DataLogger man
 - **Completed Tasks:** Phases 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 (100% of phases completed).
 - **Partially Completed / Uncompleted Tasks:** None.
 - **Build Status:** `dotnet build SerialLogHub.sln --configuration Release` $\rightarrow$ **Succeeded (0 Errors)**.
-- **Test Results:** `dotnet test SerialLogHub.sln --configuration Release --no-build` $\rightarrow$ **45 Passed, 0 Failed, 0 Skipped** (`~1s`).
+- **Test Results:** `dotnet test SerialLogHub.sln --configuration Release --no-build` $\rightarrow$ **52 Passed, 0 Failed, 0 Skipped** (`~2s`). See [docs/FINAL_FOLLOWUP_AUDIT.md](FINAL_FOLLOWUP_AUDIT.md) for the follow-up negative security, migration, and performance verification details.
 - **Migration Instructions:**
   - Ensure **.NET 10 SDK (`10.0.x`)** is installed locally (`dotnet --version`).
   - Existing SQLite databases (`serialloghub.db`) are upgraded automatically and non-destructively at startup by `DbSeeder.EnsureSchemaUpgradedAsync`.

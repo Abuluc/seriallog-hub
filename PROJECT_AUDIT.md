@@ -1,6 +1,9 @@
-# Project Audit Report (`PROJECT_AUDIT.md`)
+# Project Audit Report (`PROJECT_AUDIT.md` — Historical Pre-Refactor Baseline)
 
-> **Audit Date:** 2026-11-22  
+> [!NOTE]
+> **HISTORICAL DOCUMENT (PRE-REFACTOR BASELINE):** This report documents the initial read-only audit of the three legacy internship directories (`WhiloggerWEB-master`, `WhiloggerU--master`, `WebPortApp-main`) conducted **prior** to building the modern **.NET 10 LTS** `SerialLogHub.sln` platform. All critical issues identified below have since been resolved in `src/`. For the current `.NET 10 LTS` architecture, security verification, and 52-test suite results, see [docs/FINAL_FOLLOWUP_AUDIT.md](docs/FINAL_FOLLOWUP_AUDIT.md) and [docs/FINAL_ENGINEERING_REPORT.md](docs/FINAL_ENGINEERING_REPORT.md).
+
+> **Original Audit Date:** 2026-11-22  
 > **Scope:** Full read-only technical, architectural, security, and privacy audit of all repositories in the workspace prior to any code modifications.  
 > **Redaction Policy:** All sensitive values (public/private IP addresses, database credentials, API keys, JWT signing secrets, certificate thumbprints, personal names, and former employer branding) are intentionally redacted in this report.
 

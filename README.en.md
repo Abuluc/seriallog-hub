@@ -6,7 +6,7 @@
 [![.NET 10 LTS](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-10.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
 [![EF Core SQLite](https://img.shields.io/badge/EF%20Core%2010-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
-[![xUnit](https://img.shields.io/badge/Tests-45%2F45%20xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
+[![xUnit](https://img.shields.io/badge/Tests-52%2F52%20xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
 [![Docker](https://img.shields.io/badge/Deployment-Docker%20%2B%20Render-2496ED?logo=docker&logoColor=white)](deployment/docker-compose.yml)
 
 ## Table of Contents
@@ -92,7 +92,7 @@ Detailed sequence diagrams and engineering reports are documented in:
 | **Backend API** | C#, .NET 10 LTS, ASP.NET Core Web API, EF Core 10, SQLite, Swagger/OpenAPI, Built-in Rate Limiter |
 | **Web Dashboard** | ASP.NET Core 10 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
 | **Desktop COM Bridge** | .NET 10 Windows Forms (`net10.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
-| **Testing & DevOps** | xUnit (45 tests), GitHub Actions CI, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
+| **Testing & DevOps** | xUnit (52 tests), GitHub Actions CI, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
 
 ---
 
@@ -203,7 +203,7 @@ Full endpoint contracts and SignalR Hub documentation are in [docs/api/API_DOCUM
 
 ## 13. Testing
 
-- **Automated Test Suite (`dotnet test SerialLogHub.sln`):** **45/45 xUnit tests passing** (`PasswordSecurityServiceTests`, `SerialTransportTests`, `UserControllerTests`, `WebLayerTests`, `AnomalyDetectionEngineTests`, `TelemetryAndSecurityTests`).
+- **Automated Test Suite (`dotnet test SerialLogHub.sln`):** **52/52 xUnit tests passing** (`PasswordSecurityServiceTests`, `SerialTransportTests`, `UserControllerTests`, `WebLayerTests`, `AnomalyDetectionEngineTests`, `TelemetryAndSecurityTests`).
 - **End-to-End 3-Tier Verification:** Verified `SerialLogHub.Api` + `SerialLogHub.Web` + `SerialLogHub.Desktop` (headless virtual device) across authentication, BOLA/IDOR blocking, WMI + virtual port sync, `TEST`, `WLJ`, `WLG`/`WLW`, `WLH0`, and `WLB` telemetry streaming & SQLite persistence.
 - **Browser UI Verification:** Verified zero console errors across Login, Dashboard, uPlot + Chart.js charting, Anomaly filtering, Virtual COM connection, Server Telemetry Archive, and Guided 6-Step Device Configuration Wizard.
 

@@ -63,3 +63,18 @@ Physical DataLogger commands fall into two categories:
 - **Active Mode (`0ms` extra delay):** When commands are arriving or ports change, the bridge polls at full responsiveness.
 - **Idle Backoff:** After `15` consecutive empty polls, polling backs off by `+1200ms`; after `40` consecutive empty polls, it backs off by `+2500ms`, cutting idle HTTP traffic by >60%.
 - **Network Error Backoff:** On transient API connection errors, `_consecutiveErrorCount` applies exponential backoff (`2s`, `4s`, `8s`, capped at `10s`) and automatically recovers to `0` on the next successful poll.
+
+---
+
+## 5. Simulator vs. Physical Hardware Verification Matrix
+
+To maintain strict engineering transparency, the table below separates behaviors verified in automated simulator/integration tests from physical electrical behaviors that require an attached RS-232/USB DataLogger device:
+
+| Capability / Behavior | Simulator & Automated Test Verification | Physical Hardware Validation Requirement |
+| :--- | :--- | :--- |
+| **WMI Port Name Extraction (`ExtractRawPortName`)** | **Verified** (`SerialTransportTests` across `COM3 (USB)`, `COM4(USB)`, `USB-SERIAL (COM7)`, `COM99`) | Verified against Windows `Win32_SerialPort` |
+| **Handshake Validation & Unrelated Port Rejection** | **Verified** (`WebLayerTests` + E2E test against non-existent/Bluetooth `COM77` returning `Error` with no cookie) | Physical UART baud-rate mismatch testing with real logger |
+| **Command Lifecycle (`Pending -> Dispatched -> Completed/TimedOut`)** | **Verified** (`UserControllerTests`, `TelemetryAndSecurityTests`) | — |
+| **Non-Idempotent Command Guard (`WLE1`, `WLH1`, `WLS0`, `WLM`)** | **Verified** (`BridgeEngine_IsNonIdempotentPhysicalCommand_ClassifiesCommandsAccurately`) | Physical EEPROM/Flash erase duration under `WLE1` |
+| **60-Row `WLB` Telemetry Streaming & SQLite Persistence** | **Verified** (`SimulatedSerialTransport` + `UserController` auto-ingest test) | Physical cable unplug mid-`WLB` stream (`IOException` recovery) |
+| **Graceful Shutdown & `CancellationToken` `ReadLine()` Unblock** | **Verified** (`MainForm._shutdownCts` & `RealSerialTransport` token callback) | Physical driver handle release on USB disconnect |

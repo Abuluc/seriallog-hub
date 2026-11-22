@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -64,11 +65,24 @@ public class AuthController : ControllerBase
             return BadRequest("Email address is not verified.");
         }
 
+        // Issue a cryptographically random, operator-bound session token stored as a SHA-256 hash in ApiKeys
+        string rawOperatorToken = "slh_op_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        _db.ApiKeys.Add(new ApiKeyEntity
+        {
+            Key = OperatorScopeGuard.HashCredential(rawOperatorToken),
+            OwnerEmail = user.Email.Trim().ToLowerInvariant(),
+            ClientType = ApiCredentialClientTypes.OperatorSession,
+            IsRevoked = false,
+            ExpiresAt = DateTime.UtcNow.AddHours(24)
+        });
+        await _db.SaveChangesAsync();
+
         return Ok(new
         {
             message = "Login successful.",
             username = user.Username,
-            email = user.Email
+            email = user.Email,
+            operatorToken = rawOperatorToken
         });
     }
 
@@ -131,10 +145,11 @@ public class AuthController : ControllerBase
             return BadRequest("Email, new username, and current password are required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, request.Email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on POST /api/auth/updatename for {TargetEmail}.", request.Email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user account modification is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on POST /api/auth/updatename for {TargetEmail}: {Reason}", request.Email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
@@ -263,10 +278,11 @@ public class AuthController : ControllerBase
             return BadRequest(new { message = "Email parameter is required." });
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/auth/profile for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user profile access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/auth/profile for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();

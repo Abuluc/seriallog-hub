@@ -25,7 +25,7 @@ public class ApiClientService
         _logger = logger;
     }
 
-    private static HttpRequestMessage CreateScopedRequest(HttpMethod method, string relativeUri, string operatorEmail, HttpContent? content = null)
+    private HttpRequestMessage CreateScopedRequest(HttpMethod method, string relativeUri, string operatorEmail, HttpContent? content = null)
     {
         var req = new HttpRequestMessage(method, relativeUri)
         {
@@ -33,7 +33,17 @@ public class ApiClientService
         };
         if (!string.IsNullOrWhiteSpace(operatorEmail))
         {
-            req.Headers.Add(OperatorEmailHeaderName, operatorEmail.Trim());
+            string cleanEmail = operatorEmail.Trim().ToLowerInvariant();
+            long unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            string signingSecret = _configuration["ApiSettings:ApiKey"] ?? "dev-serialloghub-api-key";
+            string canonical = $"{cleanEmail}|{unixSeconds}";
+            byte[] hmac = System.Security.Cryptography.HMACSHA256.HashData(
+                Encoding.UTF8.GetBytes(signingSecret),
+                Encoding.UTF8.GetBytes(canonical));
+
+            req.Headers.Add(OperatorEmailHeaderName, cleanEmail);
+            req.Headers.Add("X-OPERATOR-TIMESTAMP", unixSeconds.ToString());
+            req.Headers.Add("X-OPERATOR-PROOF", Convert.ToHexString(hmac).ToLowerInvariant());
         }
         return req;
     }

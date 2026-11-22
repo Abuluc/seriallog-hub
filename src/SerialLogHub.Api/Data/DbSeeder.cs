@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SerialLogHub.Api.Entities;
@@ -17,18 +18,23 @@ public static class DbSeeder
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
 
         await db.Database.EnsureCreatedAsync();
-        await EnsureSchemaUpgradedAsync(db, logger);
+        await UpgradeSchemaAndMigrateAsync(db, logger);
 
         string configuredApiKey = config["ApiSecurity:ApiKey"] ?? "dev-serialloghub-api-key";
-        if (!await db.ApiKeys.AnyAsync(k => k.Key == configuredApiKey))
+        string hashedConfiguredKey = OperatorScopeGuard.HashCredential(configuredApiKey);
+
+        if (!await db.ApiKeys.AnyAsync(k => k.Key == hashedConfiguredKey || k.Key == configuredApiKey))
         {
             db.ApiKeys.Add(new ApiKeyEntity
             {
-                Key = configuredApiKey,
+                Key = hashedConfiguredKey,
+                OwnerEmail = "*",
+                ClientType = ApiCredentialClientTypes.WebServer,
+                IsRevoked = false,
                 ExpiresAt = DateTime.UtcNow.AddYears(5)
             });
             await db.SaveChangesAsync();
-            logger.LogInformation("Seeded API key into ApiKeys table.");
+            logger.LogInformation("Seeded hashed WebServer API credential into ApiKeys table.");
         }
 
         bool demoEnabled = config.GetValue("DemoMode:Enabled", false);
@@ -71,10 +77,32 @@ public static class DbSeeder
         await SeedDemoTelemetryIfEmptyAsync(db, anomalyEngine, demoEmail, defaultVirtualPort, logger);
     }
 
-    private static async Task EnsureSchemaUpgradedAsync(AppDbContext db, ILogger logger)
+    /// <summary>
+    /// Versioned, non-destructive SQLite schema migration runner that inspects actual table columns via
+    /// PRAGMA table_info(...) before altering tables, recording applied migrations in __SchemaVersions
+    /// without swallowing unexpected SQL failures.
+    /// </summary>
+    public static async Task UpgradeSchemaAndMigrateAsync(AppDbContext db, ILogger? logger = null)
     {
+        var conn = db.Database.GetDbConnection();
+        bool wasClosed = conn.State != System.Data.ConnectionState.Open;
+        if (wasClosed)
+        {
+            await conn.OpenAsync();
+        }
+
         try
         {
+            // 1. Ensure __SchemaVersions tracking table exists
+            await db.Database.ExecuteSqlRawAsync(@"
+                CREATE TABLE IF NOT EXISTS __SchemaVersions (
+                    VersionNumber INTEGER NOT NULL CONSTRAINT PK_SchemaVersions PRIMARY KEY,
+                    MigrationName TEXT NOT NULL,
+                    AppliedAtUtc TEXT NOT NULL
+                );
+            ");
+
+            // 2. Migration 001: Devices & TelemetryRecords with Unique (DeviceId, RecordedAt) Index
             await db.Database.ExecuteSqlRawAsync(@"
                 CREATE TABLE IF NOT EXISTS Devices (
                     Id INTEGER NOT NULL CONSTRAINT PK_Devices PRIMARY KEY AUTOINCREMENT,
@@ -104,28 +132,79 @@ public static class DbSeeder
                     CONSTRAINT FK_TelemetryRecords_Devices_DeviceId FOREIGN KEY (DeviceId) REFERENCES Devices (Id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS IX_TelemetryRecords_UserEmail_RecordedAt ON TelemetryRecords (UserEmail, RecordedAt);
-                CREATE INDEX IF NOT EXISTS IX_TelemetryRecords_DeviceId_RecordedAt ON TelemetryRecords (DeviceId, RecordedAt);
+                DROP INDEX IF EXISTS IX_TelemetryRecords_DeviceId_RecordedAt;
+                CREATE UNIQUE INDEX IF NOT EXISTS IX_TelemetryRecords_DeviceId_RecordedAt ON TelemetryRecords (DeviceId, RecordedAt);
             ");
 
-            // Add new Command lifecycle columns idempotently if an older SQLite file exists
-            string[] alterStatements =
-            {
-                "ALTER TABLE Commands ADD COLUMN Status TEXT NOT NULL DEFAULT 'Pending';",
-                "ALTER TABLE Commands ADD COLUMN DispatchedAt TEXT NULL;",
-                "ALTER TABLE Commands ADD COLUMN CompletedAt TEXT NULL;",
-                "ALTER TABLE Commands ADD COLUMN ErrorCategory TEXT NULL;",
-                "ALTER TABLE Commands ADD COLUMN AttemptCount INTEGER NOT NULL DEFAULT 0;"
-            };
+            // 3. Migration 002: Command lifecycle columns on Commands (inspected via PRAGMA table_info)
+            var commandCols = await GetExistingColumnsAsync(conn, "Commands");
+            await AddColumnIfMissingAsync(db, commandCols, "Commands", "Status", "TEXT NOT NULL DEFAULT 'Pending'");
+            await AddColumnIfMissingAsync(db, commandCols, "Commands", "DispatchedAt", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, commandCols, "Commands", "CompletedAt", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, commandCols, "Commands", "ErrorCategory", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, commandCols, "Commands", "AttemptCount", "INTEGER NOT NULL DEFAULT 0");
 
-            foreach (string sql in alterStatements)
+            // 4. Migration 003: Scoped credential columns on ApiKeys (OwnerEmail, ClientType, IsRevoked)
+            var apiKeyCols = await GetExistingColumnsAsync(conn, "ApiKeys");
+            await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "OwnerEmail", "TEXT NOT NULL DEFAULT '*'");
+            await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "ClientType", "TEXT NOT NULL DEFAULT 'WebServer'");
+            await AddColumnIfMissingAsync(db, apiKeyCols, "ApiKeys", "IsRevoked", "INTEGER NOT NULL DEFAULT 0");
+
+            // 5. Migrate any legacy plaintext keys in ApiKeys to SHA-256 hashes non-destructively
+            var plaintextKeys = await db.ApiKeys
+                .Where(k => !k.Key.StartsWith("sha256:"))
+                .ToListAsync();
+
+            if (plaintextKeys.Count > 0)
             {
-                try { await db.Database.ExecuteSqlRawAsync(sql); }
-                catch { /* Column already exists */ }
+                foreach (var pk in plaintextKeys)
+                {
+                    pk.Key = OperatorScopeGuard.HashCredential(pk.Key);
+                }
+                await db.SaveChangesAsync();
+            }
+
+            // Record applied schema version 3
+            await db.Database.ExecuteSqlRawAsync(@"
+                INSERT OR REPLACE INTO __SchemaVersions (VersionNumber, MigrationName, AppliedAtUtc)
+                VALUES (3, '003_ScopedApiKeys_CommandLifecycle_UniqueTelemetry', datetime('now'));
+            ");
+        }
+        finally
+        {
+            if (wasClosed)
+            {
+                await conn.CloseAsync();
             }
         }
-        catch (Exception ex)
+    }
+
+    private static async Task<HashSet<string>> GetExistingColumnsAsync(DbConnection conn, string tableName)
+    {
+        var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            logger.LogWarning(ex, "Non-fatal warning during SQLite schema upgrade check.");
+            string colName = reader.GetString(1);
+            cols.Add(colName);
+        }
+        return cols;
+    }
+
+    private static async Task AddColumnIfMissingAsync(
+        AppDbContext db,
+        HashSet<string> existingColumns,
+        string tableName,
+        string columnName,
+        string columnDefinition)
+    {
+        if (!existingColumns.Contains(columnName))
+        {
+            string sql = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
+            await db.Database.ExecuteSqlRawAsync(sql);
+            existingColumns.Add(columnName);
         }
     }
 

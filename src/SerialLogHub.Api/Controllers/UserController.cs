@@ -15,15 +15,18 @@ public class UserController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ILogger<UserController> _logger;
     private readonly AnomalyDetectionEngine _anomalyEngine;
+    private readonly IConfiguration? _configuration;
 
     public UserController(
         AppDbContext db,
         ILogger<UserController> logger,
-        AnomalyDetectionEngine? anomalyEngine = null)
+        AnomalyDetectionEngine? anomalyEngine = null,
+        IConfiguration? configuration = null)
     {
         _db = db;
         _logger = logger;
         _anomalyEngine = anomalyEngine ?? new AnomalyDetectionEngine();
+        _configuration = configuration;
     }
 
     [HttpPost("updateports")]
@@ -34,10 +37,11 @@ public class UserController : ControllerBase
             return BadRequest("UserEmail is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.UserEmail))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, request.UserEmail);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on POST /api/user/updateports for {TargetEmail}.", request.UserEmail);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on POST /api/user/updateports for {TargetEmail}: {Reason}", request.UserEmail, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = request.UserEmail.Trim().ToLowerInvariant();
@@ -75,10 +79,11 @@ public class UserController : ControllerBase
             return BadRequest("Email parameter is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getports for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user resource access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getports for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -101,10 +106,11 @@ public class UserController : ControllerBase
             return BadRequest("Email and port are required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, request.Email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on POST /api/user/SendCommand for {TargetEmail}.", request.Email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command execution is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on POST /api/user/SendCommand for {TargetEmail}: {Reason}", request.Email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
@@ -112,7 +118,6 @@ public class UserController : ControllerBase
             ? Guid.NewGuid().ToString()
             : request.CommandID.Trim();
 
-        // Idempotency protection: if the exact CommandID already exists for this user, return the existing record
         var existingCmd = await _db.Commands
             .FirstOrDefaultAsync(c => c.Email.ToLower() == normalizedEmail && c.CommandID == commandId);
         if (existingCmd != null)
@@ -151,16 +156,16 @@ public class UserController : ControllerBase
             return BadRequest("Email parameter is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getcommands for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command polling is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getcommands for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
         DateTime cutoffUtc = DateTime.UtcNow.AddSeconds(-60);
 
-        // Expire stale pending/dispatched commands older than 60s
         var staleCommands = await _db.Commands
             .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed && c.Timestamp < cutoffUtc)
             .ToListAsync();
@@ -190,7 +195,6 @@ public class UserController : ControllerBase
             return NotFound("No pending commands.");
         }
 
-        // Transition lifecycle: Pending -> Dispatched
         nextCommand.Status = CommandLifecycleStatus.Dispatched;
         nextCommand.DispatchedAt ??= DateTime.UtcNow;
         nextCommand.AttemptCount++;
@@ -207,10 +211,11 @@ public class UserController : ControllerBase
             return BadRequest("Invalid update request.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, request.Email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, request.Email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on POST /api/user/UpdateCommand for {TargetEmail}.", request.Email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command update is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on POST /api/user/UpdateCommand for {TargetEmail}: {Reason}", request.Email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = request.Email.Trim().ToLowerInvariant();
@@ -268,7 +273,6 @@ public class UserController : ControllerBase
             Timestamp = DateTime.UtcNow
         });
 
-        // Automatically persist server-side telemetry when a WLB dump succeeds
         if (!isErr &&
             command.Message.Trim().Equals("WLB", StringComparison.OrdinalIgnoreCase) &&
             resp.Contains("CMD,OK,", StringComparison.OrdinalIgnoreCase))
@@ -291,10 +295,11 @@ public class UserController : ControllerBase
             return BadRequest("Email is required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/user/history for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user history access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/history for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -329,10 +334,11 @@ public class UserController : ControllerBase
             return BadRequest("Email and CommandID are required.");
         }
 
-        if (!OperatorScopeGuard.IsAuthorizedForOperator(HttpContext, email))
+        var auth = await OperatorScopeGuard.AuthorizeOperatorAsync(HttpContext, _db, _configuration, email);
+        if (!auth.IsAuthorized)
         {
-            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getresponses for {TargetEmail}.", email);
-            return StatusCode(StatusCodes.Status403Forbidden, "Cross-user command response access is forbidden.");
+            _logger.LogWarning("BOLA attempt blocked on GET /api/user/getresponses for {TargetEmail}: {Reason}", email, auth.ErrorMessage);
+            return StatusCode(auth.StatusCode, auth.ErrorMessage);
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
@@ -352,8 +358,15 @@ public class UserController : ControllerBase
     {
         try
         {
-            var samples = _anomalyEngine.ParseDataLoggerPayload(rawWlbResponse);
-            if (samples.Count == 0) return;
+            var rawSamples = _anomalyEngine.ParseDataLoggerPayload(rawWlbResponse);
+            if (rawSamples.Count == 0) return;
+
+            var samples = rawSamples
+                .GroupBy(s => s.RecordedAt)
+                .Select(g => g.First())
+                .OrderBy(s => s.RecordedAt)
+                .Take(TelemetryController.MaxSamplesPerIngest)
+                .ToList();
 
             var device = await _db.Devices
                 .FirstOrDefaultAsync(d => d.UserEmail.ToLower() == normalizedEmail && d.PortName == portName);
@@ -377,10 +390,25 @@ public class UserController : ControllerBase
                 device.LastSeenUtc = DateTime.UtcNow;
             }
 
+            DateTime minTs = samples[0].RecordedAt;
+            DateTime maxTs = samples[^1].RecordedAt;
+
+            var existingInWindow = (await _db.TelemetryRecords
+                .AsNoTracking()
+                .Where(r => r.DeviceId == device.Id && r.RecordedAt >= minTs && r.RecordedAt <= maxTs)
+                .Select(r => r.RecordedAt)
+                .ToListAsync())
+                .ToHashSet();
+
             var evaluations = _anomalyEngine.EvaluateSeries(samples);
             for (int i = 0; i < samples.Count; i++)
             {
                 var s = samples[i];
+                if (!existingInWindow.Add(s.RecordedAt))
+                {
+                    continue;
+                }
+
                 var eval = evaluations[i];
                 _db.TelemetryRecords.Add(new TelemetryRecordEntity
                 {
