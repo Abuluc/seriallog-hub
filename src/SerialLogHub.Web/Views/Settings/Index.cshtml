@@ -267,6 +267,12 @@
                 if (currentStep === 3) loadDeviceClock();
             }
 
+            function escapeHtml(str) {
+                return String(str ?? "").replace(/[&<>"']/g, ch => ({
+                    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+                })[ch]);
+            }
+
             function renderSummary() {
                 const list = document.getElementById("wizardSummaryList");
                 list.innerHTML = "";
@@ -274,7 +280,7 @@
                     const status = stepStatus[i] || "Skipped";
                     const badgeClass = status.startsWith("Applied") ? "slh-badge-ok" : "slh-badge-warn";
                     const li = document.createElement("li");
-                    li.innerHTML = `<span><strong>Step ${i}:</strong> ${stepNames[i]}</span><span class="slh-badge ${badgeClass}">${status}</span>`;
+                    li.innerHTML = `<span><strong>Step ${i}:</strong> ${escapeHtml(stepNames[i])}</span><span class="slh-badge ${badgeClass}">${escapeHtml(status)}</span>`;
                     list.appendChild(li);
                 }
             }
@@ -326,9 +332,10 @@
                     } else if (currentStep === 2) {
                         const t = document.getElementById("wizDelayTime").value;
                         if (!t) { toastr.warning("Select a start time or click Skip Step."); return; }
-                        const today = new Date().toISOString().slice(2, 10);
+                        const now = new Date();
+                        const localDate = `${String(now.getFullYear()).slice(2)}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
                         const res = await $.post("/Settings/SetDelayStart", {
-                            Time: `${today},${t}:00`,
+                            Time: `${localDate},${t}:00`,
                             model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
                         });
                         if (res.status !== "success") throw new Error(res.message);
@@ -349,7 +356,7 @@
                             toastr.warning("Confirm flash erase checkbox or click Skip Step.");
                             return;
                         }
-                        const res = await $.get("/Settings/Format", {
+                        const res = await $.post("/Settings/Format", {
                             SelectedPort: conn.currentPort,
                             SelectedBaudRate: conn.currentBaud
                         });
@@ -357,10 +364,22 @@
                         stepStatus[4] = "Applied (Formatted)";
                         toastr.success("Device flash memory formatted.");
                     } else if (currentStep === 5) {
-                        const minT = document.getElementById("wizMinTemp").value;
-                        const maxT = document.getElementById("wizMaxTemp").value;
-                        const minH = document.getElementById("wizMinHum").value;
-                        const maxH = document.getElementById("wizMaxHum").value;
+                        const minT = parseFloat(document.getElementById("wizMinTemp").value);
+                        const maxT = parseFloat(document.getElementById("wizMaxTemp").value);
+                        const minH = parseFloat(document.getElementById("wizMinHum").value);
+                        const maxH = parseFloat(document.getElementById("wizMaxHum").value);
+                        if ([minT, maxT, minH, maxH].some(isNaN)) {
+                            toastr.warning("All threshold fields must be valid numbers.");
+                            return;
+                        }
+                        if (minT >= maxT) {
+                            toastr.error("Minimum temperature must be lower than maximum temperature.");
+                            return;
+                        }
+                        if (minH < 0 || maxH > 100 || minH >= maxH) {
+                            toastr.error("Humidity thresholds must satisfy 0 <= Min < Max <= 100.");
+                            return;
+                        }
                         const res = await $.post("/Settings/SetMM", {
                             model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud },
                             mmModel: { MinTemp: minT, MaxTemp: maxT, MinHum: minH, MaxHum: maxH }
@@ -381,9 +400,10 @@
                         if (res.status !== "success") throw new Error(res.message);
 
                         if (document.getElementById("wizAutoStart").checked) {
-                            await $.post("/Settings/AutoStart", {
+                            const autoRes = await $.post("/Settings/AutoStart", {
                                 model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
                             });
+                            if (autoRes.status !== "success") throw new Error(autoRes.message || "Auto-Start failed.");
                             stepStatus[6] = `Applied (${total}s + AutoStart)`;
                         } else {
                             stepStatus[6] = `Applied (${total}s)`;

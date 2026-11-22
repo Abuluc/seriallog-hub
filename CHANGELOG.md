@@ -2,6 +2,19 @@
 
 All notable changes to **SerialLog Hub** are documented in this file.
 
+## [1.2.0] - 2026-11-22
+
+### Added
+- **Command Audit Log (`GET /api/user/history` & Dashboard Panel):** Real-time command history table displaying recent port commands, status/error badges, response previews, and UTC timestamps alongside local IndexedDB datasets.
+- **Adjustable Anomaly Thresholds:** Interactive dashboard controls (`Max Temp °C`, `Temp Rate °C/10s`, `Humidity Rate %/10s`) that recalculate anomaly flags, KPI counters, table rows, and all Chart.js analytics charts live without re-uploading CSV data.
+- **One-Click Device Diagnostics:** Queries Device Label (`WLW`), Battery (`WLJ`), and RTC Clock (`WLH0`) sequentially and renders a compact diagnostics strip in the Serial Terminal panel.
+
+### Fixed
+- **Strict COM Port Handshake Validation:** Fixed false-positive `"Connected"` status when connecting to unrelated, missing, or non-DataLogger COM ports (e.g., Bluetooth serial links); `TestConnection` now requires a valid `CMD,OK,LCZ,` or `CMD,OK,LSS,` signature and clears stale `Connection` cookies on failure.
+- **Desktop Bridge Reliability & UI Thread Safety:** Offloaded `SerialPort` I/O and WMI port enumeration off the WinForms UI thread, added `SemaphoreSlim` port-sync serialization, cancellation-aware `ReadLine()` timeouts, safe `async void` exception handling, and deduplication of completed commands.
+- **API Command Queue Hygiene:** Auto-expires stale pending commands older than 60 seconds in `GET /api/user/getcommands` and guards `UpdateCommand` against duplicate history entries.
+- **Web Dashboard & Wizard Hardening:** Fixed multi-tab SignalR tracking (`UserConnectionManager`), composable telemetry filters (tab + index search + time range), large-dataset min/max stack safety, `WLB` duplicate ingestion between SignalR and HTTP, `uPlot` instance cleanup, HTML escaping in history/audit tables, `[HttpPost]` enforcement on `/Settings/Format`, and server/client validation on `/Settings/SetMM`.
+
 ## [1.1.0] - 2026-11-22
 
 ### Added

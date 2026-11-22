@@ -9,7 +9,48 @@
     let originalData = [];
     let filteredData = [];
     let currentPage = 1;
+    let activeTab = "all";
+    let lastPortListKey = "";
+    let lastWlbKey = "";
+    let lastWlbAppliedAt = 0;
     const pageSize = 250;
+
+    const anomalyConfig = {
+        maxTemp: 40.0,
+        tempRate: 3.0,
+        humRate: 15.0
+    };
+
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function arrayMin(arr) {
+        let min = Infinity;
+        for (let i = 0; i < arr.length; i++) {
+            if (arr[i] < min) min = arr[i];
+        }
+        return min;
+    }
+
+    function arrayMax(arr) {
+        let max = -Infinity;
+        for (let i = 0; i < arr.length; i++) {
+            if (arr[i] > max) max = arr[i];
+        }
+        return max;
+    }
+
+    function isPlaceholderPort(port) {
+        if (!port) return true;
+        const p = port.trim();
+        return !p || p.startsWith("No COM") || p.startsWith("Error:");
+    }
 
     function initIndexedDB() {
         return new Promise((resolve, reject) => {
@@ -106,14 +147,14 @@
     }
 
     /**
-     * Combined anomaly detector:
-     * 1. Rate-of-change spike detection (from WhiloggerWEB)
-     * 2. Absolute threshold & out-of-range detection (ported from WebPortApp-main)
+     * Combined anomaly detector with user-adjustable thresholds:
+     * 1. Rate-of-change spike detection (per 10s normalized)
+     * 2. Absolute threshold & out-of-range detection
      */
     function detectAnomalies(rows) {
-        const tempRateMax = 3.0;
-        const humRateMax = 15.0;
-        const tempMaxThreshold = 40.0;
+        const tempRateMax = anomalyConfig.tempRate;
+        const humRateMax = anomalyConfig.humRate;
+        const tempMaxThreshold = anomalyConfig.maxTemp;
 
         for (let i = 0; i < rows.length; i++) {
             const cur = rows[i];
@@ -157,7 +198,7 @@
                     const xPos = u.valToPos(u.data[0][idx], "x");
                     const yPos = Math.min(u.valToPos(u.data[1][idx], "y"), u.valToPos(u.data[2][idx], "y"));
                     tooltipEl.innerHTML =
-                        `<div><strong>Time:</strong> ${chartData.timeLabels[idx]}</div>` +
+                        `<div><strong>Time:</strong> ${escapeHtml(chartData.timeLabels[idx])}</div>` +
                         `<div><strong>Temp:</strong> ${chartData.temperatureData[idx]} °C</div>` +
                         `<div><strong>Humidity:</strong> ${chartData.humidityData[idx]} %</div>`;
                     tooltipEl.style.left = Math.max(8, xPos + 12) + "px";
@@ -169,15 +210,20 @@
     }
 
     function plotGraph(chartData) {
+        if (plotInstance) {
+            plotInstance.destroy();
+            plotInstance = null;
+        }
         const container = document.getElementById("graphContainer");
         container.innerHTML = "";
         if (!chartData.temperatureData.length) return;
 
         const width = container.offsetWidth || 800;
         const height = 320;
-        const allVals = chartData.temperatureData.concat(chartData.humidityData);
-        const yMin = Math.floor(Math.min(...allVals) - 2);
-        const yMax = Math.ceil(Math.max(...allVals) + 2);
+        const minVal = Math.min(arrayMin(chartData.temperatureData), arrayMin(chartData.humidityData));
+        const maxVal = Math.max(arrayMax(chartData.temperatureData), arrayMax(chartData.humidityData));
+        const yMin = Math.floor(minVal - 2);
+        const yMax = Math.ceil(maxVal + 2);
 
         const opts = {
             width,
@@ -227,12 +273,12 @@
         const hums = rows.map(r => r.humidity);
         const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
 
-        setVal("statMinTemp", `${Math.min(...temps).toFixed(2)} °C`);
+        setVal("statMinTemp", `${arrayMin(temps).toFixed(2)} °C`);
         setVal("statAvgTemp", `${avg(temps).toFixed(2)} °C`);
-        setVal("statMaxTemp", `${Math.max(...temps).toFixed(2)} °C`);
-        setVal("statMinHum", `${Math.min(...hums).toFixed(2)} %`);
+        setVal("statMaxTemp", `${arrayMax(temps).toFixed(2)} °C`);
+        setVal("statMinHum", `${arrayMin(hums).toFixed(2)} %`);
         setVal("statAvgHum", `${avg(hums).toFixed(2)} %`);
-        setVal("statMaxHum", `${Math.max(...hums).toFixed(2)} %`);
+        setVal("statMaxHum", `${arrayMax(hums).toFixed(2)} %`);
     }
 
     function destroyAnalyticsCharts() {
@@ -342,6 +388,40 @@
         }
     }
 
+    function applyFilters() {
+        let rows = originalData.slice();
+
+        if (activeTab === "anomalies") {
+            rows = rows.filter(r => r.temperatureAnomaly || r.humidityAnomaly);
+        }
+
+        const searchEl = document.getElementById("indexSearch");
+        const q = searchEl ? searchEl.value.trim() : "";
+        if (q) {
+            rows = rows.filter(r => String(r.id).includes(q));
+        }
+
+        const timeToggle = document.getElementById("toggleTimeRange");
+        if (timeToggle && timeToggle.checked) {
+            const s = document.getElementById("startDateTime").value;
+            const e = document.getElementById("endDateTime").value;
+            if (s && e) {
+                const startMs = new Date(s).getTime();
+                const endMs = new Date(e).getTime();
+                if (!isNaN(startMs) && !isNaN(endMs)) {
+                    rows = rows.filter(r => {
+                        const ts = new Date(`${r.date}T${r.clock}`).getTime();
+                        return ts >= startMs && ts <= endMs;
+                    });
+                }
+            }
+        }
+
+        filteredData = rows;
+        currentPage = 1;
+        renderTable();
+    }
+
     function renderTable() {
         const tbody = document.getElementById("datatbody");
         tbody.innerHTML = "";
@@ -372,7 +452,7 @@
                 statusHtml = '<span class="slh-badge slh-badge-warn">Hum Anomaly</span>';
             }
 
-            tr.innerHTML = `<td>${r.id}</td><td>${r.temperature.toFixed(2)}</td><td>${r.humidity.toFixed(2)}</td><td>${r.date}</td><td>${r.clock}</td><td>${statusHtml}</td>`;
+            tr.innerHTML = `<td>${r.id}</td><td>${r.temperature.toFixed(2)}</td><td>${r.humidity.toFixed(2)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.clock)}</td><td>${statusHtml}</td>`;
             frag.appendChild(tr);
         });
 
@@ -380,17 +460,23 @@
         document.getElementById("pageInfo").textContent = `Page ${currentPage} / ${totalPages}`;
     }
 
+    function updateAnomalyDisplayAndCharts() {
+        if (!originalData.length) return;
+        detectAnomalies(originalData);
+        const anomalies = originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly).length;
+        document.getElementById("kpiAnomalyCount").textContent = String(anomalies);
+        renderAnalyticsCharts(originalData);
+        applyFilters();
+    }
+
     function applyDataset(csvContent, sourceLabel, fileName, isDemo) {
         const parsed = parseCsv(csvContent);
         if (!parsed.rows.length) {
             toastr.warning("No valid DataLogger rows found in dataset.");
-            return;
+            return false;
         }
 
         originalData = detectAnomalies(parsed.rows);
-        filteredData = originalData.slice();
-        currentPage = 1;
-
         const anomalies = originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly).length;
         document.getElementById("kpiTotalRows").textContent = String(originalData.length);
         document.getElementById("kpiAnomalyCount").textContent = String(anomalies);
@@ -403,16 +489,31 @@
         plotGraph(parsed.chart);
         updateTelemetryStats(originalData);
         renderAnalyticsCharts(originalData);
-        renderTable();
+        applyFilters();
         saveDataset(csvContent, sourceLabel, parsed.chart, fileName).then(renderHistoryTable);
+        return true;
+    }
+
+    function applySerialDumpOnce(rawCsv, fileName, toastText) {
+        const digest = `${rawCsv.length}:${rawCsv.slice(0, 64)}:${rawCsv.slice(-64)}`;
+        const now = Date.now();
+        if (digest === lastWlbKey && (now - lastWlbAppliedAt) < 4000) {
+            return;
+        }
+        lastWlbKey = digest;
+        lastWlbAppliedAt = now;
+        if (applyDataset(rawCsv, "Serial Port", fileName, false)) {
+            toastr.success(toastText);
+        }
     }
 
     async function renderHistoryTable() {
         const entries = await getAllDatasets();
         const tbody = document.getElementById("csvTablebody");
+        if (!tbody) return;
         tbody.innerHTML = "";
         if (!entries.length) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No saved datasets in browser history yet.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:18px;">No saved datasets in browser history yet.</td></tr>';
             return;
         }
 
@@ -422,11 +523,10 @@
             const tr = document.createElement("tr");
             tr.innerHTML =
                 `<td>${entry.id}</td>` +
-                `<td>${meta.fileName}</td>` +
-                `<td>${meta.rowCount}</td>` +
-                `<td>${meta.uploadDate}</td>` +
-                `<td>${meta.uploadTime}</td>` +
-                `<td>${meta.situation}</td>` +
+                `<td>${escapeHtml(meta.fileName)}</td>` +
+                `<td>${Number(meta.rowCount) || 0}</td>` +
+                `<td>${escapeHtml(meta.uploadDate)}</td>` +
+                `<td>${escapeHtml(meta.situation)}</td>` +
                 `<td><button type="button" class="slh-btn slh-btn-outline slh-btn-sm" data-load-id="${entry.id}">Load</button></td>`;
             tbody.appendChild(tr);
         });
@@ -438,17 +538,47 @@
                 const meta = JSON.parse(record.data);
                 const parsed = parseCsv(meta.csvContent);
                 originalData = detectAnomalies(parsed.rows);
-                filteredData = originalData.slice();
-                currentPage = 1;
                 document.getElementById("kpiTotalRows").textContent = String(originalData.length);
                 document.getElementById("kpiAnomalyCount").textContent = String(originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly).length);
                 plotGraph(parsed.chart);
                 updateTelemetryStats(originalData);
                 renderAnalyticsCharts(originalData);
-                renderTable();
+                applyFilters();
                 toastr.info(`Loaded dataset #${record.id} (${meta.fileName}).`);
             });
         });
+    }
+
+    async function refreshCommandHistory() {
+        const tbody = document.getElementById("commandHistoryBody");
+        if (!tbody) return;
+        try {
+            const res = await fetch("/Home/CommandHistory?take=25");
+            if (!res.ok) return;
+            const items = await res.json();
+            if (!Array.isArray(items) || !items.length) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:18px;">No commands recorded yet.</td></tr>';
+                return;
+            }
+            const frag = document.createDocumentFragment();
+            items.forEach(item => {
+                const tr = document.createElement("tr");
+                const isErr = Boolean(item.isError);
+                const badgeClass = isErr ? "slh-badge slh-badge-danger" : "slh-badge slh-badge-ok";
+                const ts = item.timestamp ? new Date(item.timestamp).toISOString().replace("T", " ").slice(0, 19) : "--";
+                const respText = item.responsePreview || "(empty)";
+                tr.innerHTML =
+                    `<td><code>${escapeHtml(item.port || "--")}</code></td>` +
+                    `<td><code>${escapeHtml(item.message || "")}</code></td>` +
+                    `<td><span class="${badgeClass}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;" title="${escapeHtml(respText)}">${escapeHtml(respText)}</span></td>` +
+                    `<td style="white-space:nowrap;color:#64748b;">${escapeHtml(ts)}</td>`;
+                frag.appendChild(tr);
+            });
+            tbody.innerHTML = "";
+            tbody.appendChild(frag);
+        } catch {
+            // ignore transient audit poll error
+        }
     }
 
     function appendTerminal(msg) {
@@ -466,9 +596,27 @@
         const disconnectBtn = document.getElementById("disconnectBtn");
         const sendBtn = document.getElementById("sendButton");
         const wlbBtn = document.getElementById("quickReadWlbBtn");
+        const diagBtn = document.getElementById("deviceDiagnosticsBtn");
+        const diagStrip = document.getElementById("deviceDiagStrip");
         const kpiPort = document.getElementById("kpiActivePort");
 
         if (connected) {
+            if (port) {
+                let found = false;
+                for (let i = 0; i < portEl.options.length; i++) {
+                    if (portEl.options[i].value === port) { found = true; break; }
+                }
+                if (!found) {
+                    const opt = document.createElement("option");
+                    opt.value = port;
+                    opt.textContent = port;
+                    portEl.appendChild(opt);
+                }
+                portEl.value = port;
+            }
+            if (baud) {
+                baudEl.value = String(baud);
+            }
             portEl.disabled = true;
             baudEl.disabled = true;
             msgEl.disabled = false;
@@ -476,6 +624,7 @@
             disconnectBtn.style.display = "inline-flex";
             sendBtn.style.display = "inline-flex";
             wlbBtn.style.display = "inline-flex";
+            if (diagBtn) diagBtn.style.display = "inline-flex";
             if (kpiPort) kpiPort.textContent = `${port} @ ${baud}`;
         } else {
             portEl.disabled = false;
@@ -486,6 +635,8 @@
             disconnectBtn.style.display = "none";
             sendBtn.style.display = "none";
             wlbBtn.style.display = "none";
+            if (diagBtn) diagBtn.style.display = "none";
+            if (diagStrip) diagStrip.style.display = "none";
             if (kpiPort) kpiPort.textContent = "Not Connected";
         }
     }
@@ -495,8 +646,16 @@
             const res = await fetch("/Home/Getavabileport");
             if (!res.ok) return;
             const ports = await res.json();
+            if (!Array.isArray(ports)) return;
+
+            const portKey = ports.join("||");
+            if (portKey === lastPortListKey) return;
+            lastPortListKey = portKey;
+
             const select = document.getElementById("selectedPort");
-            const prev = select.value;
+            const conn = window.SerialLogHub.getConnectionCookie();
+            const prev = (conn && conn.Connected && conn.currentPort) ? conn.currentPort : select.value;
+
             select.innerHTML = "";
             ports.forEach(p => {
                 const opt = document.createElement("option");
@@ -504,8 +663,15 @@
                 opt.textContent = p;
                 select.appendChild(opt);
             });
+
             if (prev && ports.includes(prev)) {
                 select.value = prev;
+            } else if (conn && conn.Connected && conn.currentPort && ports.length > 0 && !isPlaceholderPort(ports[0])) {
+                // Connected port disappeared from bridge port list
+                window.SerialLogHub.clearConnectionCookie();
+                setConnectedUi(false);
+                appendTerminal(`WARN: Active port ${conn.currentPort} is no longer available.`);
+                toastr.warning(`Port ${conn.currentPort} was disconnected.`);
             }
         } catch {
             // ignore transient poll error
@@ -538,29 +704,80 @@
                 if (res.responseMessage && res.responseMessage.includes("CMD,OK,")) {
                     const parsed = parseCsv(res.responseMessage);
                     if (parsed.rows.length > 0) {
-                        applyDataset(res.responseMessage, "Serial Port", `${conn.currentPort}_log.csv`, false);
-                        toastr.success(`Loaded ${parsed.rows.length} readings from device.`);
+                        applySerialDumpOnce(res.responseMessage, `${conn.currentPort}_log.csv`, `Loaded ${parsed.rows.length} readings from device.`);
                     }
                 }
             } else {
-                appendTerminal(`WARN: ${res.message}`);
-                toastr.warning(res.message);
+                appendTerminal(`ERROR: ${res.message || "Device returned an error."}`);
+                toastr.error(res.message || "Command failed.");
             }
+            refreshCommandHistory();
         } catch {
             window.SerialLogHub.hideLoading();
             toastr.error("Failed to send command.");
         }
     }
 
+    async function runDeviceDiagnostics() {
+        const conn = window.SerialLogHub.getConnectionCookie();
+        if (!conn || !conn.currentPort) {
+            toastr.warning("Please connect to a COM port first.");
+            return;
+        }
+
+        const strip = document.getElementById("deviceDiagStrip");
+        const labelEl = document.getElementById("diagLabel");
+        const battEl = document.getElementById("diagBattery");
+        const clockEl = document.getElementById("diagClock");
+
+        window.SerialLogHub.showLoading("Running device diagnostics (WLW / WLJ / WLH0)...");
+        appendTerminal("DIAG -> Querying Label (WLW), Battery (WLJ), RTC Clock (WLH0)...");
+        const payload = { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud };
+        const extractDiag = (res, prefix) => {
+            if (!res || res.status !== "success") return res?.message || "Error";
+            const raw = typeof res.responseMessage === "string"
+                ? res.responseMessage
+                : (res?.responseMessage?.response || res?.response || "");
+            if (!raw) return "--";
+            return prefix && raw.startsWith(prefix) ? raw.slice(prefix.length).trim() : raw;
+        };
+
+        try {
+            const commRes = await $.get("/Settings/GetComm", payload);
+            const battRes = await $.get("/Settings/GetBattery", payload);
+            const timeRes = await $.post("/Settings/GetCalibrationTime", payload);
+
+            const labelText = extractDiag(commRes, "CMD,OK,COMMENT,");
+            const battRaw = extractDiag(battRes, "CMD,OK,BAT,");
+            const battText = battRes?.status === "success" && !battRaw.endsWith("%") ? `${battRaw}%` : battRaw;
+            const clockText = extractDiag(timeRes, "CMD,OK,TIME,");
+
+            if (labelEl) labelEl.textContent = labelText;
+            if (battEl) battEl.textContent = battText;
+            if (clockEl) clockEl.textContent = clockText;
+            if (strip) strip.style.display = "block";
+
+            appendTerminal(`DIAG <- Label: ${labelText} | Battery: ${battText} | RTC: ${clockText}`);
+            toastr.success("Device diagnostics completed.");
+            window.SerialLogHub.refreshBattery();
+            refreshCommandHistory();
+        } catch {
+            appendTerminal("DIAG ERROR: Failed to query device diagnostics.");
+            toastr.error("Device diagnostics failed.");
+        } finally {
+            window.SerialLogHub.hideLoading();
+        }
+    }
+
     window.onSerialDataDumpReceived = function (rawCsv) {
         if (rawCsv && rawCsv.includes("CMD,OK,")) {
-            applyDataset(rawCsv, "Serial Port", "SerialData.csv", false);
-            toastr.success("Telemetry stream received from Desktop COM Bridge.");
+            applySerialDumpOnce(rawCsv, "SerialData.csv", "Telemetry stream received from Desktop COM Bridge.");
         }
     };
 
     document.addEventListener("DOMContentLoaded", function () {
         renderHistoryTable();
+        refreshCommandHistory();
 
         const existingConn = window.SerialLogHub.getConnectionCookie();
         if (existingConn && existingConn.Connected) {
@@ -568,7 +785,20 @@
         }
 
         setInterval(refreshPorts, 4000);
-        document.getElementById("refreshPortsBtn").addEventListener("click", refreshPorts);
+        document.getElementById("refreshPortsBtn").addEventListener("click", () => {
+            lastPortListKey = "";
+            refreshPorts();
+        });
+
+        const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
+        if (refreshHistoryBtn) {
+            refreshHistoryBtn.addEventListener("click", refreshCommandHistory);
+        }
+
+        const diagBtn = document.getElementById("deviceDiagnosticsBtn");
+        if (diagBtn) {
+            diagBtn.addEventListener("click", runDeviceDiagnostics);
+        }
 
         document.getElementById("fileInput").addEventListener("change", function () {
             if (this.files.length > 0) {
@@ -602,7 +832,10 @@
         document.getElementById("resetGraphBtn").addEventListener("click", function () {
             originalData = [];
             filteredData = [];
-            plotInstance = null;
+            if (plotInstance) {
+                plotInstance.destroy();
+                plotInstance = null;
+            }
             document.getElementById("graphContainer").innerHTML = "";
             document.getElementById("kpiTotalRows").textContent = "0";
             document.getElementById("kpiAnomalyCount").textContent = "0";
@@ -626,45 +859,66 @@
             toastr.success("Exported Excel file.");
         });
 
+        // Adjustable Anomaly Thresholds
+        const toggleThresholds = document.getElementById("toggleThresholdControls");
+        if (toggleThresholds) {
+            toggleThresholds.addEventListener("change", function () {
+                document.getElementById("thresholdControlsContainer").style.display = this.checked ? "flex" : "none";
+            });
+        }
+
+        const applyThresholdsBtn = document.getElementById("applyThresholdsBtn");
+        if (applyThresholdsBtn) {
+            applyThresholdsBtn.addEventListener("click", function () {
+                const maxTemp = parseFloat(document.getElementById("cfgMaxTemp").value);
+                const tempRate = parseFloat(document.getElementById("cfgTempRate").value);
+                const humRate = parseFloat(document.getElementById("cfgHumRate").value);
+
+                if (isNaN(maxTemp) || isNaN(tempRate) || isNaN(humRate) || tempRate <= 0 || humRate <= 0) {
+                    toastr.warning("Enter valid numeric thresholds (rates must be > 0).");
+                    return;
+                }
+
+                anomalyConfig.maxTemp = maxTemp;
+                anomalyConfig.tempRate = tempRate;
+                anomalyConfig.humRate = humRate;
+
+                if (!originalData.length) {
+                    toastr.info("Anomaly thresholds updated for the next dataset.");
+                    return;
+                }
+
+                updateAnomalyDisplayAndCharts();
+                toastr.success(`Recalculated anomalies (Max Temp > ${maxTemp}°C, ΔT > ${tempRate}°C/10s, ΔH > ${humRate}%/10s).`);
+            });
+        }
+
         document.getElementById("btnAllData").addEventListener("click", function () {
+            activeTab = "all";
             this.classList.add("active");
             document.getElementById("btnFaultyData").classList.remove("active");
-            filteredData = originalData.slice();
-            currentPage = 1;
-            renderTable();
+            applyFilters();
         });
 
         document.getElementById("btnFaultyData").addEventListener("click", function () {
+            activeTab = "anomalies";
             this.classList.add("active");
             document.getElementById("btnAllData").classList.remove("active");
-            filteredData = originalData.filter(r => r.temperatureAnomaly || r.humidityAnomaly);
-            currentPage = 1;
-            renderTable();
+            applyFilters();
         });
 
-        document.getElementById("indexSearch").addEventListener("input", function () {
-            const q = this.value.trim();
-            filteredData = q ? originalData.filter(r => String(r.id).includes(q)) : originalData.slice();
-            currentPage = 1;
-            renderTable();
-        });
+        document.getElementById("indexSearch").addEventListener("input", applyFilters);
 
         document.getElementById("toggleTimeRange").addEventListener("change", function () {
             document.getElementById("timeRangeContainer").style.display = this.checked ? "flex" : "none";
+            applyFilters();
         });
 
         document.getElementById("timeFilterBtn").addEventListener("click", function () {
             const s = document.getElementById("startDateTime").value;
             const e = document.getElementById("endDateTime").value;
             if (!s || !e) { toastr.warning("Select both start and end timestamps."); return; }
-            const startMs = new Date(s).getTime();
-            const endMs = new Date(e).getTime();
-            filteredData = originalData.filter(r => {
-                const ts = new Date(`${r.date}T${r.clock}`).getTime();
-                return ts >= startMs && ts <= endMs;
-            });
-            currentPage = 1;
-            renderTable();
+            applyFilters();
         });
 
         document.getElementById("prevPage").addEventListener("click", () => {
@@ -678,7 +932,10 @@
         document.getElementById("connectBtn").addEventListener("click", async function () {
             const port = document.getElementById("selectedPort").value;
             const baud = parseInt(document.getElementById("selectedBaudRate").value, 10) || 9600;
-            if (!port) { toastr.warning("Select a COM port."); return; }
+            if (isPlaceholderPort(port)) {
+                toastr.warning("Select a valid COM port before connecting.");
+                return;
+            }
 
             window.SerialLogHub.showLoading(`Testing connection on ${port}...`);
             appendTerminal(`Connecting to ${port} @ ${baud}...`);
@@ -690,17 +947,23 @@
                 });
                 window.SerialLogHub.hideLoading();
                 const msg = res?.responseMessage?.response || "";
-                if (res.status === "success" && (msg.includes("OK") || msg.includes("CMD") || msg.includes("LSS"))) {
+                const connCookie = window.SerialLogHub.getConnectionCookie();
+                if (res.status === "success" && connCookie && connCookie.Connected) {
                     setConnectedUi(true, port, baud);
                     appendTerminal(`CONNECTED <- ${msg}`);
                     toastr.success(`Connected to ${port}.`);
                     window.SerialLogHub.refreshBattery();
                 } else {
-                    appendTerminal(`FAILED: ${res.message || msg}`);
-                    toastr.error(res.message || "Device did not respond.");
+                    window.SerialLogHub.clearConnectionCookie();
+                    setConnectedUi(false);
+                    const errText = res.message || msg || "Device did not respond with a valid DataLogger handshake.";
+                    appendTerminal(`FAILED: ${errText}`);
+                    toastr.error(errText);
                 }
+                refreshCommandHistory();
             } catch {
                 window.SerialLogHub.hideLoading();
+                setConnectedUi(false);
                 toastr.error("Connection test failed.");
             }
         });

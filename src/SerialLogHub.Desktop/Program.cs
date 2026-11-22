@@ -58,15 +58,19 @@ internal static class Program
 
         while (!cts.Token.IsCancellationRequested)
         {
-            await engine.PollAndExecuteNextCommandAsync(email, cts.Token);
-            await engine.SendHeartbeatAsync(email, cts.Token);
             try
             {
+                await engine.PollAndExecuteNextCommandAsync(email, cts.Token);
+                await engine.SendHeartbeatAsync(email, cts.Token);
                 await Task.Delay(500, cts.Token);
             }
             catch (OperationCanceledException)
             {
                 break;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Bridge] Loop error: {ex.Message}");
             }
         }
 

@@ -2,35 +2,54 @@ using System.Collections.Concurrent;
 
 namespace SerialLogHub.Web.Services;
 
+/// <summary>
+/// Tracks multiple SignalR connections per authenticated operator so multi-tab usage works seamlessly.
+/// </summary>
 public class UserConnectionManager
 {
-    private readonly ConcurrentDictionary<string, string> _userConnections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _userConnections = new(StringComparer.OrdinalIgnoreCase);
 
     public void AddConnection(string userEmail, string connectionId)
     {
-        if (!string.IsNullOrWhiteSpace(userEmail) && !string.IsNullOrWhiteSpace(connectionId))
+        if (string.IsNullOrWhiteSpace(userEmail) || string.IsNullOrWhiteSpace(connectionId))
         {
-            _userConnections[userEmail.Trim().ToLowerInvariant()] = connectionId;
+            return;
         }
+
+        string key = userEmail.Trim().ToLowerInvariant();
+        var set = _userConnections.GetOrAdd(key, _ => new ConcurrentDictionary<string, byte>());
+        set[connectionId] = 0;
     }
 
     public void RemoveConnection(string connectionId)
     {
-        var match = _userConnections.FirstOrDefault(x => x.Value == connectionId);
-        if (!string.IsNullOrEmpty(match.Key))
+        if (string.IsNullOrWhiteSpace(connectionId))
         {
-            _userConnections.TryRemove(match.Key, out _);
+            return;
+        }
+
+        foreach (var kvp in _userConnections)
+        {
+            if (kvp.Value.TryRemove(connectionId, out _) && kvp.Value.IsEmpty)
+            {
+                _userConnections.TryRemove(kvp.Key, out _);
+            }
         }
     }
 
-    public string? GetConnectionId(string userEmail)
+    public IReadOnlyList<string> GetConnectionIds(string userEmail)
     {
         if (string.IsNullOrWhiteSpace(userEmail))
         {
-            return null;
+            return Array.Empty<string>();
         }
 
-        _userConnections.TryGetValue(userEmail.Trim().ToLowerInvariant(), out var connectionId);
-        return connectionId;
+        string key = userEmail.Trim().ToLowerInvariant();
+        if (_userConnections.TryGetValue(key, out var set) && !set.IsEmpty)
+        {
+            return set.Keys.ToList();
+        }
+
+        return Array.Empty<string>();
     }
 }

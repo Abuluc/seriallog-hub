@@ -16,6 +16,7 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _portTimer;
     private readonly System.Windows.Forms.Timer _commandTimer;
     private readonly System.Windows.Forms.Timer _heartbeatTimer;
+    private readonly CancellationTokenSource _shutdownCts = new();
 
     private bool _allowExit;
 
@@ -63,7 +64,7 @@ public sealed class MainForm : Form
         _virtualDeviceCheckBox.CheckedChanged += async (_, _) =>
         {
             _engine.IncludeVirtualDemoDevice = _virtualDeviceCheckBox.Checked;
-            await _engine.SyncPortsAsync(_userEmail, forcePublish: true);
+            await SafeRunAsync(() => _engine.SyncPortsAsync(_userEmail, forcePublish: true, _shutdownCts.Token));
         };
 
         var refreshBtn = new Button
@@ -76,7 +77,7 @@ public sealed class MainForm : Form
             FlatStyle = FlatStyle.Flat
         };
         refreshBtn.FlatAppearance.BorderSize = 0;
-        refreshBtn.Click += async (_, _) => await _engine.SyncPortsAsync(_userEmail, forcePublish: true);
+        refreshBtn.Click += async (_, _) => await SafeRunAsync(() => _engine.SyncPortsAsync(_userEmail, forcePublish: true, _shutdownCts.Token));
 
         leftPanel.Controls.Add(_portsListBox);
         leftPanel.Controls.Add(portsLabel);
@@ -122,19 +123,19 @@ public sealed class MainForm : Form
         _engine.PortsUpdated += UpdatePortsList;
 
         _portTimer = new System.Windows.Forms.Timer { Interval = Math.Max(1000, _config.PortScanIntervalMs) };
-        _portTimer.Tick += async (_, _) => await _engine.SyncPortsAsync(_userEmail);
+        _portTimer.Tick += async (_, _) => await SafeRunAsync(() => _engine.SyncPortsAsync(_userEmail, false, _shutdownCts.Token));
 
         _commandTimer = new System.Windows.Forms.Timer { Interval = Math.Max(500, _config.CommandPollIntervalMs) };
-        _commandTimer.Tick += async (_, _) => await _engine.PollAndExecuteNextCommandAsync(_userEmail);
+        _commandTimer.Tick += async (_, _) => await SafeRunAsync(() => _engine.PollAndExecuteNextCommandAsync(_userEmail, _shutdownCts.Token));
 
         _heartbeatTimer = new System.Windows.Forms.Timer { Interval = Math.Max(1500, _config.HeartbeatIntervalMs) };
-        _heartbeatTimer.Tick += async (_, _) => await _engine.SendHeartbeatAsync(_userEmail);
+        _heartbeatTimer.Tick += async (_, _) => await SafeRunAsync(() => _engine.SendHeartbeatAsync(_userEmail, _shutdownCts.Token));
 
         Load += async (_, _) =>
         {
             AppendLog("Bridge started. Scanning COM ports...");
-            await _engine.SyncPortsAsync(_userEmail, forcePublish: true);
-            await _engine.SendHeartbeatAsync(_userEmail);
+            await SafeRunAsync(() => _engine.SyncPortsAsync(_userEmail, forcePublish: true, _shutdownCts.Token));
+            await SafeRunAsync(() => _engine.SendHeartbeatAsync(_userEmail, _shutdownCts.Token));
             _portTimer.Start();
             _commandTimer.Start();
             _heartbeatTimer.Start();
@@ -168,11 +169,28 @@ public sealed class MainForm : Form
             }
         }
 
+        _shutdownCts.Cancel();
         _portTimer.Stop();
         _commandTimer.Stop();
         _heartbeatTimer.Stop();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
+    }
+
+    private async Task SafeRunAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (OperationCanceledException)
+        {
+            // Closing
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Unexpected error: {ex.Message}");
+        }
     }
 
     private void RestoreFromTray()
@@ -185,6 +203,8 @@ public sealed class MainForm : Form
 
     private void AppendLog(string message)
     {
+        if (IsDisposed || !IsHandleCreated) return;
+
         if (InvokeRequired)
         {
             BeginInvoke(() => AppendLog(message));
@@ -201,6 +221,8 @@ public sealed class MainForm : Form
 
     private void UpdatePortsList(IReadOnlyList<string> ports)
     {
+        if (IsDisposed || !IsHandleCreated) return;
+
         if (InvokeRequired)
         {
             BeginInvoke(() => UpdatePortsList(ports));

@@ -49,7 +49,7 @@ public class SettingsController : Controller
     public Task<JsonResult> GetBattery(CalibrationModel model, CancellationToken ct)
         => DispatchDeviceCommandAsync(model, "WLJ", ct);
 
-    [HttpGet]
+    [HttpPost]
     public Task<JsonResult> Format(CalibrationModel model, CancellationToken ct)
         => DispatchDeviceCommandAsync(model, "WLE1", ct);
 
@@ -78,6 +78,16 @@ public class SettingsController : Controller
         if (mmModel == null)
         {
             return Task.FromResult(Json(new { status = "error", message = "Threshold values are required." }));
+        }
+
+        if (mmModel.MinTemp >= mmModel.MaxTemp)
+        {
+            return Task.FromResult(Json(new { status = "error", message = "Minimum temperature must be lower than maximum temperature." }));
+        }
+
+        if (mmModel.MinHum < 0 || mmModel.MaxHum > 100 || mmModel.MinHum >= mmModel.MaxHum)
+        {
+            return Task.FromResult(Json(new { status = "error", message = "Humidity thresholds must satisfy 0 <= Min < Max <= 100." }));
         }
 
         string command = $"WLM,{mmModel.MinTemp},{mmModel.MaxTemp},{mmModel.MinHum},{mmModel.MaxHum}";
@@ -118,6 +128,19 @@ public class SettingsController : Controller
                 Response = string.Empty,
                 ResponseMessage = string.Empty,
                 Result = string.Empty
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.Response) &&
+            result.Response.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+        {
+            return Json(new
+            {
+                status = "error",
+                message = result.Response,
+                Response = result.Response,
+                ResponseMessage = result.Response,
+                Result = result.Response
             });
         }
 

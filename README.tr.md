@@ -46,9 +46,10 @@ Staj dönemindeki bir prototip olarak başlayan proje; kapsamlı güvenlik denet
   - **Sıcaklık Dağılım Histogramı (Chart.js):** Ölçümlerin sıcaklık aralıklarına (`<20°C`, `20–22°C`, `22–24°C`, `24–26°C`, `>26°C`) göre frekans dağılımı.
   - **Sıcaklık–Nem Korelasyon Grafiği (Chart.js Scatter):** Normal ölçümleri mavi, anomali noktalarını kırmızı olarak gösteren dağılım grafiği.
   - **Sağlık & Anomali Pasta Grafiği (Chart.js Doughnut):** Normal, Sıcaklık Anomalisi, Nem Anomalisi ve Çift Sıçrama oranlarının özeti.
-- **Otomatik Anomali Tespiti:** Ani değişim sıçramalarını ve eşik dışı sıcaklık/nem değerlerini işaretler; **Anomalies Only** sekmesi ile hatalı ölçümleri filtreler.
+- **Ayarlanabilir Anomali Tespiti:** Ani değişim sıçramalarını ve eşik dışı sıcaklık/nem değerlerini işaretler; canlı olarak değiştirilebilen eşik değerleri (`Maks. Sıcaklık °C`, `ΔT/10sn`, `ΔH/10sn`) ve birleştirilebilir filtreleme (Tümü/Anomali + İndeks Arama + Zaman Aralığı) sunar.
+- **Tek Tıkla Cihaz Tanılama ve Komut Denetim Günlüğü (Audit Log):** Cihaz Etiketi (`WLW`), Batarya (`WLJ`) ve RTC Saat (`WLH0`) bilgilerini tek tıkla sorgulayarak özet şeritte gösterir; gönderilen her komutu ve hata yanıtını API destekli **Command Audit Log** (`GET /api/user/history`) tablosunda canlı listeler.
 - **Adım Adım 6 Aşamalı Cihaz Konfigürasyon Sihirbazı:** Sol menüden tek girişli sıralı akış (rastgele yan menü seçimi engelli); **Önceki**, **Adımı Atla (Skip Step)**, **Kaydet ve İlerle**, görsel adım çubuğu (Tamamlandı / Atlandı / Aktif) ve özet ekranı ile Cihaz Açıklaması (`WLG`/`WLW`), Gecikmeli Başlatma (`WLS0`), RTC Saat Kalibrasyonu (`WLH0`/`WLH1`), Bellek Biçimlendirme (`WLE1`), Alarm Eşikleri (`WLM`) ve Örnekleme Aralığı / Otomatik Başlatma (`WLA`/`WLV1`) yönetimi.
-- **WMI Destekli COM Port Köprüsü:** Windows COM portlarını donanım açıklamalarıyla (`Win32_SerialPort`) listeler ve `WLB` veri akışını SignalR üzerinden web arayüzüne aktarır.
+- **Sıkı COM Port El Sıkışma Doğrulaması ve WMI Keşfi:** Windows COM portlarını donanım açıklamalarıyla (`Win32_SerialPort`) listeler, alakasız portlarda hatalı "Connected" oluşmaması için `CMD,OK,LCZ,` / `CMD,OK,LSS,` yanıt imzasını doğrular ve `WLB` veri akışını SignalR üzerinden aktarır.
 - **Tarayıcı IndexedDB Geçmişi ve Excel Dışa Aktarma:** Yüklenen CSV dosyalarını ve cihaz dökümlerini tarayıcıda saklar; ExcelJS ile `.xlsx` formatında dışa aktarır.
 - **İzole Demo ve Simülasyon Modu:** Hem yerel Masaüstü Sanal COM Port (`COM99`) hem de bulut ortamı için opsiyonel `CloudDemoResponderService` desteği sunar.
 

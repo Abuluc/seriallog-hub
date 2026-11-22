@@ -46,9 +46,10 @@ Originally started as an internship prototype, the system was audited, security-
   - **Temperature Distribution Histogram (Chart.js):** Frequency distribution across thermal buckets (`<20°C`, `20–22°C`, `22–24°C`, `24–26°C`, `>26°C`).
   - **Temperature vs. Humidity Correlation Scatter Plot (Chart.js):** Plots every measurement with normal points in blue and anomaly outliers highlighted in red.
   - **Health & Anomaly Breakdown Doughnut (Chart.js):** Visualizes Normal vs. Temperature Anomaly vs. Humidity Anomaly vs. Dual Spike proportions.
-- **Automated Anomaly Detection:** Flags sudden rate-of-change spikes and out-of-range temperature/humidity readings with dedicated **Anomalies Only** filtering.
+- **Adjustable Anomaly Detection:** Flags sudden rate-of-change spikes and out-of-range temperature/humidity readings with live user-configurable thresholds (`Max Temp °C`, `ΔT/10s`, `ΔH/10s`) and composable filtering (All/Anomalies + Index Search + Time Range).
+- **One-Click Device Diagnostics & Command Audit Log:** Sequentially queries Device Label (`WLW`), Battery (`WLJ`), and RTC Clock (`WLH0`) into an inline diagnostics strip, while recording every executed command and error in the live API-backed **Command Audit Log** (`GET /api/user/history`).
 - **Guided 6-Step Device Configuration Wizard:** Single-entry sequential workflow from the sidebar (no ad-hoc sidebar jumping) with **Previous**, **Skip Step**, **Save & Continue**, visual progress stepper (Completed / Skipped / Active), and final summary screen covering Device Description (`WLG`/`WLW`), Delayed Start (`WLS0`), RTC Clock Calibration (`WLH0`/`WLH1`), Flash Memory Format (`WLE1`), Alarm Thresholds (`WLM`), and Sampling Interval / Auto-Start (`WLA`/`WLV1`).
-- **COM Port Bridge with WMI Discovery:** Enumerates physical Windows COM ports with friendly hardware names (`Win32_SerialPort`) and streams `WLB` logs over SignalR.
+- **Strict COM Port Handshake & WMI Discovery:** Enumerates physical Windows COM ports with friendly hardware names (`Win32_SerialPort`), validates `CMD,OK,LCZ,` / `CMD,OK,LSS,` handshakes to prevent false-positive connections on unrelated ports, and streams `WLB` logs over SignalR.
 - **Browser IndexedDB History & Excel Export:** Persists uploaded CSV datasets and device dumps locally in IndexedDB and exports filtered tables to `.xlsx` via ExcelJS.
 - **Isolated Demo & Simulation Mode:** Supports both local Desktop Virtual COM Port (`COM99`) and optional Cloud Demo Responder for zero-hardware evaluation.
 

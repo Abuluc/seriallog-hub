@@ -102,6 +102,17 @@ public class ApiClientService
         return result?.Ports ?? new List<string>();
     }
 
+    public async Task<string> GetCommandHistoryJsonAsync(string email, int take = 25, CancellationToken ct = default)
+    {
+        using var response = await _httpClient.GetAsync($"user/history?email={Uri.EscapeDataString(email)}&take={Math.Clamp(take, 1, 100)}", ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            return "[]";
+        }
+
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
     public async Task<bool> SendCommandAsync(CommandModel model, CancellationToken ct = default)
     {
         using var response = await _httpClient.PostAsJsonAsync("user/SendCommand", model, ct);

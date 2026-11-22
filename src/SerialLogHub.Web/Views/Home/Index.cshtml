@@ -134,11 +134,30 @@
                 <button type="button" id="btnFaultyData" class="slh-tab-btn">Anomalies Only</button>
             </div>
             <div class="slh-toolbar">
-                <input type="text" id="indexSearch" class="slh-input" style="width: 170px;" placeholder="Search by ID..." />
+                <input type="text" id="indexSearch" class="slh-input" style="width: 150px;" placeholder="Search by ID..." />
                 <label style="font-size: 0.8rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
                     <input type="checkbox" id="toggleTimeRange" /> Time Filter
                 </label>
+                <label style="font-size: 0.8rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                    <input type="checkbox" id="toggleThresholdControls" /> Thresholds
+                </label>
             </div>
+        </div>
+
+        <div id="thresholdControlsContainer" style="display: none; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--slh-border);">
+            <div>
+                <label for="cfgMaxTemp" style="font-size: 0.72rem; font-weight: 600; display: block;">Max Temp (°C)</label>
+                <input type="number" id="cfgMaxTemp" class="slh-input" style="width: 95px;" value="40" step="0.5" />
+            </div>
+            <div>
+                <label for="cfgTempRate" style="font-size: 0.72rem; font-weight: 600; display: block;">Temp Spike (°C/10s)</label>
+                <input type="number" id="cfgTempRate" class="slh-input" style="width: 115px;" value="3" step="0.5" />
+            </div>
+            <div>
+                <label for="cfgHumRate" style="font-size: 0.72rem; font-weight: 600; display: block;">Hum Spike (%/10s)</label>
+                <input type="number" id="cfgHumRate" class="slh-input" style="width: 115px;" value="15" step="1" />
+            </div>
+            <button type="button" id="applyThresholdsBtn" class="slh-btn slh-btn-primary slh-btn-sm">Re-Evaluate</button>
         </div>
 
         <div id="timeRangeContainer" style="display: none; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; padding: 12px; background: #f8fafc; border-radius: 8px;">
@@ -234,37 +253,76 @@
                     <i class="fa-solid fa-download"></i> Read Logs (WLB)
                 </button>
             </div>
+            <div style="margin-top: 8px;">
+                <button type="button" id="deviceDiagnosticsBtn" class="slh-btn slh-btn-outline slh-btn-block slh-btn-sm" style="display: none;">
+                    <i class="fa-solid fa-stethoscope"></i> Query Device Diagnostics (WLW / WLJ / WLH0)
+                </button>
+            </div>
         </form>
+
+        <div id="deviceDiagStrip" style="display: none; margin-top: 12px; padding: 10px 12px; background: #f8fafc; border: 1px solid var(--slh-border); border-radius: 8px; font-size: 0.78rem;">
+            <div><strong>Label:</strong> <span id="diagLabel">--</span></div>
+            <div><strong>Battery:</strong> <span id="diagBattery">--</span></div>
+            <div><strong>RTC Clock:</strong> <span id="diagClock">--</span></div>
+        </div>
 
         <div class="slh-terminal-log" id="serialTerminalLog">Ready. Select a COM port and click Connect.</div>
     </div>
 </section>
 
-<!-- Previous Uploads (IndexedDB) -->
-<section class="slh-card">
-    <div class="slh-card-header">
-        <div class="slh-card-title">
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            <span>Previous Datasets (Local IndexedDB History)</span>
+<!-- Command Audit History & Previous Uploads -->
+<section class="slh-grid-main" style="grid-template-columns: 1fr 1fr;">
+    <div class="slh-card">
+        <div class="slh-card-header">
+            <div class="slh-card-title">
+                <i class="fa-solid fa-list-check"></i>
+                <span>Command Audit Log (API History)</span>
+            </div>
+            <button type="button" id="refreshHistoryBtn" class="slh-btn slh-btn-ghost slh-btn-sm" title="Refresh command audit log">
+                <i class="fa-solid fa-rotate"></i>
+            </button>
+        </div>
+        <div class="slh-table-wrap" style="max-height: 260px;">
+            <table class="slh-table">
+                <thead>
+                    <tr>
+                        <th>Port</th>
+                        <th>Command</th>
+                        <th>Response</th>
+                        <th>Time (UTC)</th>
+                    </tr>
+                </thead>
+                <tbody id="commandHistoryBody">
+                    <tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 18px;">No commands recorded yet.</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
-    <div class="slh-table-wrap" style="max-height: 260px;">
-        <table class="slh-table" id="csvTable">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>File Name</th>
-                    <th>Records</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Source</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody id="csvTablebody">
-                <tr><td colspan="7" style="text-align: center; color: #94a3b8; padding: 18px;">No saved datasets in browser history yet.</td></tr>
-            </tbody>
-        </table>
+
+    <div class="slh-card">
+        <div class="slh-card-header">
+            <div class="slh-card-title">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                <span>Previous Datasets (Local IndexedDB)</span>
+            </div>
+        </div>
+        <div class="slh-table-wrap" style="max-height: 260px;">
+            <table class="slh-table" id="csvTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>File Name</th>
+                        <th>Records</th>
+                        <th>Date</th>
+                        <th>Source</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="csvTablebody">
+                    <tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 18px;">No saved datasets in browser history yet.</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </section>
 

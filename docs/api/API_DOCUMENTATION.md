@@ -120,10 +120,10 @@ Queues a serial command from `SerialLogHub.Web` for `SerialLogHub.Desktop` to ex
 *(Note: `Port` is also accepted as an alias for legacy `SelecetdPort`.)*
 
 ### `GET /api/user/getcommands?email={email}`
-Polled by `SerialLogHub.Desktop`. Returns the oldest unprocessed command (`200 OK`) or `404 Not Found` if the queue is empty.
+Polled by `SerialLogHub.Desktop`. Automatically expires stale unprocessed commands older than 60 seconds, then returns the oldest active unprocessed command (`200 OK`) or `404 Not Found` if the queue is empty.
 
 ### `POST /api/user/UpdateCommand`
-Called by `SerialLogHub.Desktop` after receiving the hardware response. Marks `IsProcessed = true` and archives a copy to `CommandHistories`.
+Called by `SerialLogHub.Desktop` after receiving the hardware response. Marks `IsProcessed = true` (idempotent guard prevents duplicate history writes) and archives a copy to `CommandHistories`.
 
 **Request:**
 ```json
@@ -133,6 +133,9 @@ Called by `SerialLogHub.Desktop` after receiving the hardware response. Marks `I
   "response": "CMD,OK,LSS,VIRTUAL_LOGGER_V1"
 }
 ```
+
+### `GET /api/user/history?email={email}&take=25`
+Returns the most recent completed commands from `CommandHistories` (clamped to `1..100`) for the operator's **Command Audit Log**, including `port`, `baudRate`, `message`, `timestamp`, `responsePreview`, and `isError`.
 
 ### `GET /api/user/getresponses?email={email}&CommandID={commandId}`
 Polled by `SerialLogHub.Web` (with bounded timeout) until `isProcessed` is `true`.

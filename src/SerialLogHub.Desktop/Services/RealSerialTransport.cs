@@ -10,7 +10,7 @@ namespace SerialLogHub.Desktop.Services;
 /// - Handshake ("TEST" -> sends "WLB", reads single response line)
 /// - Bulk log dump ("WLB" -> streams until "CMD,OK,LSD," or 5-second inactivity timeout)
 /// - Device configuration commands ("WLJ", "WLW", "WLG", "WLH0", "WLH1", "WLS0", "WLE1", "WLA", "WLV1", "WLM")
-/// Includes safe WMI friendly port description lookup ported from WebPortApp-main.
+/// All blocking SerialPort / WMI operations run off the UI thread.
 /// </summary>
 public sealed class RealSerialTransport : ISerialTransport
 {
@@ -18,11 +18,16 @@ public sealed class RealSerialTransport : ISerialTransport
     private const int ReadBufferSize = 4096;
     private const int MaxStreamLineCount = 100_000;
     private static readonly TimeSpan InactivityTimeout = TimeSpan.FromSeconds(5);
-    private static readonly Regex ValidComPortRegex = new(@"^COM\d+$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ComPortRegex = new(@"\b(COM\d+)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public IReadOnlyList<string> GetAvailablePorts()
     {
-        string[] rawPorts = SerialPort.GetPortNames().Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(p => p).ToArray();
+        string[] rawPorts = SerialPort.GetPortNames()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(ExtractPortNumber)
+            .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         if (rawPorts.Length == 0)
         {
             return Array.Empty<string>();
@@ -54,37 +59,61 @@ public sealed class RealSerialTransport : ISerialTransport
         CancellationToken cancellationToken = default)
     {
         string cleanPort = ExtractRawPortName(portName);
+        if (string.IsNullOrWhiteSpace(cleanPort))
+        {
+            throw new ArgumentException($"Invalid COM port name: '{portName}'.");
+        }
+
         int effectiveBaud = baudRate > 0 ? baudRate : 9600;
 
-        using var serialPort = new SerialPort(cleanPort, effectiveBaud)
-        {
-            WriteTimeout = 3000,
-            ReadTimeout = 5000
-        };
-
-        serialPort.Open();
-
-        if (serialPort.BytesToRead > 0)
-        {
-            serialPort.DiscardInBuffer();
-        }
-
-        if (string.Equals(commandMessage, "TEST", StringComparison.OrdinalIgnoreCase))
-        {
-            serialPort.WriteLine("WLB");
-            await Task.Delay(200, cancellationToken);
-            return await Task.Run(serialPort.ReadLine, cancellationToken);
-        }
-
+        // For bulk WLB streaming we need async BaseStream reads; open port off the UI thread first.
         if (string.Equals(commandMessage, "WLB", StringComparison.OrdinalIgnoreCase))
         {
-            serialPort.WriteLine(commandMessage);
+            using var serialPort = await Task.Run(() =>
+            {
+                var sp = new SerialPort(cleanPort, effectiveBaud)
+                {
+                    WriteTimeout = 3000,
+                    ReadTimeout = 5000
+                };
+                sp.Open();
+                if (sp.BytesToRead > 0) sp.DiscardInBuffer();
+                sp.WriteLine(commandMessage);
+                return sp;
+            }, cancellationToken);
+
+            using var reg = cancellationToken.Register(() => { try { serialPort.Close(); } catch { } });
             await Task.Delay(200, cancellationToken);
             return await ReadBulkStreamAsync(serialPort, onStreamProgress, cancellationToken);
         }
 
-        serialPort.WriteLine(commandMessage);
-        return await Task.Run(serialPort.ReadLine, cancellationToken);
+        // Single-line handshake ("TEST") or configuration command: run entirely off UI thread
+        return await Task.Run(() =>
+        {
+            using var serialPort = new SerialPort(cleanPort, effectiveBaud)
+            {
+                WriteTimeout = 3000,
+                ReadTimeout = 5000
+            };
+
+            using var reg = cancellationToken.Register(() => { try { serialPort.Close(); } catch { } });
+            serialPort.Open();
+
+            if (serialPort.BytesToRead > 0)
+            {
+                serialPort.DiscardInBuffer();
+            }
+
+            if (string.Equals(commandMessage, "TEST", StringComparison.OrdinalIgnoreCase))
+            {
+                serialPort.WriteLine("WLB");
+                Thread.Sleep(200);
+                return serialPort.ReadLine();
+            }
+
+            serialPort.WriteLine(commandMessage);
+            return serialPort.ReadLine();
+        }, cancellationToken);
     }
 
     private static async Task<string> ReadBulkStreamAsync(
@@ -168,8 +197,19 @@ public sealed class RealSerialTransport : ISerialTransport
             return string.Empty;
         }
 
-        string candidate = portDisplay.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
-        return ValidComPortRegex.IsMatch(candidate) ? candidate.ToUpperInvariant() : portDisplay.Trim();
+        var match = ComPortRegex.Match(portDisplay);
+        return match.Success ? match.Groups[1].Value.ToUpperInvariant() : portDisplay.Trim();
+    }
+
+    private static int ExtractPortNumber(string port)
+    {
+        var match = ComPortRegex.Match(port);
+        if (match.Success && int.TryParse(match.Groups[1].Value[3..], out int num))
+        {
+            return num;
+        }
+
+        return int.MaxValue;
     }
 
     private static Dictionary<string, string> GetWmiPortDescriptions()

@@ -145,7 +145,10 @@ public sealed class LoginForm : Form
         }
         finally
         {
-            _loginButton.Enabled = true;
+            if (!IsDisposed)
+            {
+                _loginButton.Enabled = true;
+            }
         }
     }
 }

@@ -124,6 +124,24 @@ public class UserController : ControllerBase
         }
 
         string normalizedEmail = email.Trim().ToLowerInvariant();
+        DateTime expirationCutoff = DateTime.UtcNow.AddSeconds(-60);
+
+        // Auto-expire stale unprocessed commands so dead-port commands never block later requests
+        var staleCommands = await _db.Commands
+            .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed && c.Timestamp < expirationCutoff)
+            .ToListAsync();
+
+        if (staleCommands.Count > 0)
+        {
+            foreach (var stale in staleCommands)
+            {
+                stale.IsProcessed = true;
+                stale.Response = "Error: Command expired before bridge execution.";
+            }
+
+            await _db.SaveChangesAsync();
+        }
+
         var pending = await _db.Commands
             .AsNoTracking()
             .Where(c => c.Email.ToLower() == normalizedEmail && !c.IsProcessed)
@@ -167,6 +185,12 @@ public class UserController : ControllerBase
             return NotFound("No matching pending command found.");
         }
 
+        // Prevent duplicate history entries or overwriting already-processed commands
+        if (command.IsProcessed)
+        {
+            return Ok(MapToDto(command));
+        }
+
         command.Response = request.Response ?? string.Empty;
         command.IsProcessed = true;
 
@@ -186,6 +210,38 @@ public class UserController : ControllerBase
 
         _logger.LogInformation("Completed command {CommandId} for {Email}.", command.CommandID, command.Email);
         return Ok(MapToDto(command));
+    }
+
+    [HttpGet("history")]
+    public async Task<IActionResult> GetCommandHistory([FromQuery] string email, [FromQuery] int take = 25)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return BadRequest("Email is required.");
+        }
+
+        string normalizedEmail = email.Trim().ToLowerInvariant();
+        int clampedTake = Math.Clamp(take, 1, 100);
+
+        var history = await _db.CommandHistories
+            .AsNoTracking()
+            .Where(h => h.Email.ToLower() == normalizedEmail)
+            .OrderByDescending(h => h.Id)
+            .Take(clampedTake)
+            .Select(h => new
+            {
+                h.Id,
+                h.CommandID,
+                h.Port,
+                h.BaudRate,
+                h.Message,
+                h.Timestamp,
+                ResponsePreview = h.Response.Length > 120 ? h.Response.Substring(0, 120) + "..." : h.Response,
+                IsError = h.Response.StartsWith("Error:", StringComparison.OrdinalIgnoreCase)
+            })
+            .ToListAsync();
+
+        return Ok(history);
     }
 
     [HttpGet("getresponses")]

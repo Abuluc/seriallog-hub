@@ -76,10 +76,10 @@ public class HomeController : Controller
 
         if (payload.AppName == "ConsoleApp")
         {
-            var connectionId = _connectionManager.GetConnectionId(payload.UserName);
-            if (!string.IsNullOrEmpty(connectionId))
+            var connectionIds = _connectionManager.GetConnectionIds(payload.UserName);
+            if (connectionIds.Count > 0)
             {
-                await _hubContext.Clients.Client(connectionId)
+                await _hubContext.Clients.Clients(connectionIds)
                     .SendAsync("ReceiveMessage", payload.AppName, payload.Message, ct);
                 return Ok("Data sent to the user.");
             }
@@ -110,10 +110,10 @@ public class HomeController : Controller
 
         if (payload.AppName == "ConsoleApp2")
         {
-            var connectionId = _connectionManager.GetConnectionId(payload.UserName);
-            if (!string.IsNullOrEmpty(connectionId))
+            var connectionIds = _connectionManager.GetConnectionIds(payload.UserName);
+            if (connectionIds.Count > 0)
             {
-                await _hubContext.Clients.Client(connectionId)
+                await _hubContext.Clients.Clients(connectionIds)
                     .SendAsync("datareadding", payload.AppName, payload.Message, payload.Data, ct);
                 return Ok("Data sent to the user.");
             }
@@ -134,7 +134,7 @@ public class HomeController : Controller
             return Json(new { status = "error", message = "User session not found." });
         }
 
-        if (model == null || string.IsNullOrWhiteSpace(model.SelectedPort) || string.IsNullOrWhiteSpace(model.MessageToSend))
+        if (model == null || IsPlaceholderPort(model.SelectedPort) || string.IsNullOrWhiteSpace(model.MessageToSend))
         {
             return Json(new { status = "error", message = "Please select a valid port and enter a command." });
         }
@@ -161,6 +161,17 @@ public class HomeController : Controller
             });
         }
 
+        if (!string.IsNullOrWhiteSpace(result.Response) &&
+            result.Response.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+        {
+            return Json(new
+            {
+                status = "error",
+                message = result.Response,
+                ResponseMessage = result.Response
+            });
+        }
+
         return Json(new
         {
             status = "success",
@@ -179,7 +190,7 @@ public class HomeController : Controller
             return Json(new { status = "Error", message = "User session not found." });
         }
 
-        if (model == null || string.IsNullOrWhiteSpace(model.SelectedPort))
+        if (model == null || IsPlaceholderPort(model.SelectedPort))
         {
             return Json(new { status = "Error", message = "Please select a valid COM port." });
         }
@@ -198,35 +209,78 @@ public class HomeController : Controller
         var response = await _apiClient.SendAndWaitForResponseAsync(command, ct);
         if (response == null || string.IsNullOrWhiteSpace(response.Response))
         {
+            Response.Cookies.Delete("Connection");
             return Json(new
             {
                 status = "Error",
-                message = "Connection failed. Ensure the Desktop COM Bridge is running and the device is connected.",
+                message = $"No response from {model.SelectedPort}. Ensure the Desktop COM Bridge is running and a DataLogger is attached.",
                 ResponseMessage = response
             });
         }
 
-        string lower = response.Response.ToLowerInvariant();
-        if (lower.Contains("cmd,ok,lcz,") || lower.Contains("cmd,ok,lss,") || lower.Contains("cmd,ok,"))
+        string rawResponse = response.Response.Trim();
+        if (rawResponse.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
         {
-            var connectionData = new
+            Response.Cookies.Delete("Connection");
+            return Json(new
             {
-                Connected = true,
-                currentPort = model.SelectedPort,
-                currentBaud = command.BaudRate
-            };
-
-            Response.Cookies.Append("Connection", JsonSerializer.Serialize(connectionData), new CookieOptions
-            {
-                HttpOnly = false,
-                Secure = Request.IsHttps,
-                SameSite = SameSiteMode.Lax,
-                Expires = DateTimeOffset.UtcNow.AddDays(1),
-                Path = "/"
+                status = "Error",
+                message = rawResponse,
+                ResponseMessage = response
             });
         }
 
+        string lower = rawResponse.ToLowerInvariant();
+        bool validHandshake = lower.Contains("cmd,ok,lcz,") || lower.Contains("cmd,ok,lss,");
+        if (!validHandshake)
+        {
+            Response.Cookies.Delete("Connection");
+            return Json(new
+            {
+                status = "Error",
+                message = $"Invalid DataLogger handshake on {model.SelectedPort}. Port responded with unexpected data instead of a DataLogger signature.",
+                ResponseMessage = response
+            });
+        }
+
+        var connectionData = new
+        {
+            Connected = true,
+            currentPort = model.SelectedPort,
+            currentBaud = command.BaudRate
+        };
+
+        Response.Cookies.Append("Connection", JsonSerializer.Serialize(connectionData), new CookieOptions
+        {
+            HttpOnly = false,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddDays(1),
+            Path = "/"
+        });
+
         return Json(new { status = "success", message = "Connected.", ResponseMessage = response });
+    }
+
+    [Authorize]
+    [HttpGet]
+    public async Task<IActionResult> CommandHistory(int take = 25, CancellationToken ct = default)
+    {
+        string? userEmail = CurrentUserEmail;
+        if (string.IsNullOrEmpty(userEmail))
+        {
+            return Unauthorized();
+        }
+
+        string json = await _apiClient.GetCommandHistoryJsonAsync(userEmail, take, ct);
+        return Content(json, "application/json", Encoding.UTF8);
+    }
+
+    private static bool IsPlaceholderPort(string? port)
+    {
+        if (string.IsNullOrWhiteSpace(port)) return true;
+        return port.Equals("No COM ports detected", StringComparison.OrdinalIgnoreCase) ||
+               port.Equals("No active session", StringComparison.OrdinalIgnoreCase);
     }
 
     [Authorize]
