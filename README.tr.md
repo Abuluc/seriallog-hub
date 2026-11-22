@@ -3,10 +3,10 @@
 > **[English Documentation (`README.en.md`)](README.en.md)** | **[Ana Sayfa (`README.md`)](README.md)**
 
 [![CI Build & Test](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml)
-[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-8.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
-[![EF Core SQLite](https://img.shields.io/badge/EF%20Core-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
-[![xUnit](https://img.shields.io/badge/Tests-xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
+[![.NET 10 LTS](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-10.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
+[![EF Core SQLite](https://img.shields.io/badge/EF%20Core%2010-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
+[![xUnit](https://img.shields.io/badge/Tests-45%2F45%20xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
 [![Docker](https://img.shields.io/badge/Deployment-Docker%20%2B%20Render-2496ED?logo=docker&logoColor=white)](deployment/docker-compose.yml)
 
 ## İçindekiler
@@ -33,7 +33,7 @@
 
 ## 1. Proje Hakkında
 
-**SerialLog Hub**, USB/RS-232 seri port üzerinden bağlanan sıcaklık ve nem DataLogger cihazlarının konfigürasyonunu yapmak, yerel Windows COM portlarını web arayüzüne köprülemek, ölçüm anomalilerini tespit etmek ve yüksek hacimli telemetri verilerini etkileşimli grafiklerle görüntülemek için **.NET 8** ile geliştirilmiş üç katmanlı bir yönetim platformudur.
+**SerialLog Hub**, USB/RS-232 seri port üzerinden bağlanan sıcaklık ve nem DataLogger cihazlarının konfigürasyonunu yapmak, yerel Windows COM portlarını web arayüzüne köprülemek, 6 yöntemli deterministik istatistiksel motorla ölçüm anomalilerini tespit etmek, sunucu tarafında kalıcı telemetri arşivlemek ve yüksek hacimli verileri etkileşimli grafiklerle görüntülemek için **.NET 10 LTS** ile geliştirilmiş üç katmanlı bir yönetim platformudur.
 
 Staj dönemindeki bir prototip olarak başlayan proje; kapsamlı güvenlik denetimi, temiz kod standartları ve gerçek donanım olmadan tüm akışın denenebilmesini sağlayan izole **Sanal DataLogger Simülatörü** ile baştan yapılandırılmıştır.
 
@@ -60,16 +60,16 @@ Staj dönemindeki bir prototip olarak başlayan proje; kapsamlı güvenlik denet
 ```mermaid
 flowchart LR
     Browser["Web Tarayıcı\n(uPlot, IndexedDB, ExcelJS, SignalR)"]
-    Web["SerialLogHub.Web\n(ASP.NET Core 8 MVC + SignalR)\nPort 3000"]
-    API["SerialLogHub.Api\n(ASP.NET Core 8 Web API)\nPort 8080"]
-    DB[("SQLite\nUsers, UsersPort, Commands,\nCommandHistories, ApiKeys")]
-    Desktop["SerialLogHub.Desktop\n(.NET 8 Windows COM Köprüsü)"]
+    Web["SerialLogHub.Web\n(ASP.NET Core 10 MVC + SignalR)\nPort 3000"]
+    API["SerialLogHub.Api\n(ASP.NET Core 10 Web API)\nPort 8080"]
+    DB[("SQLite\nUsers, UsersPort, Commands,\nCommandHistories, ApiKeys,\nDevices, TelemetryRecords")]
+    Desktop["SerialLogHub.Desktop\n(.NET 10 Windows COM Köprüsü)"]
     HW["DataLogger Cihazı\n(Gerçek COM / Sanal COM99)"]
 
     Browser <-->|"HTTP + Cookie Auth + SignalR"| Web
-    Web <-->|"REST JSON + X-API-KEY"| API
-    API <-->|"EF Core 8"| DB
-    Desktop <-->|"REST JSON + X-API-KEY"| API
+    Web <-->|"REST JSON + X-API-KEY + X-OPERATOR-EMAIL"| API
+    API <-->|"EF Core 10"| DB
+    Desktop <-->|"REST JSON + X-API-KEY + X-OPERATOR-EMAIL"| API
     Desktop -->|"Webhooks + X-BRIDGE-KEY"| Web
     Desktop <-->|"System.IO.Ports / Simülatör"| HW
 ```
@@ -82,10 +82,10 @@ Ayrıntılı akış diyagramları için [docs/architecture/ARCHITECTURE.md](docs
 
 | Katman | Teknolojiler |
 | :--- | :--- |
-| **Backend API** | C#, .NET 8, ASP.NET Core Web API, EF Core 8, SQLite, Swagger/OpenAPI, Dahili Rate Limiter |
-| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
-| **Masaüstü COM Köprüsü** | .NET 8 Windows Forms (`net8.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
-| **Test ve Dağıtım** | xUnit, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
+| **Backend API** | C#, .NET 10 LTS, ASP.NET Core Web API, EF Core 10, SQLite, Swagger/OpenAPI, Dahili Rate Limiter |
+| **Web Dashboard** | ASP.NET Core 10 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
+| **Masaüstü COM Köprüsü** | .NET 10 Windows Forms (`net10.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
+| **Test ve Dağıtım** | xUnit (45 test), GitHub Actions CI, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
 
 ---
 
@@ -138,7 +138,7 @@ Kendi sunucunuzda Docker Compose veya Render Blueprint ile kurmak için [docs/de
 ## 9. Kurulum
 
 ### Gereksinimler
-- **.NET 8.0 SDK** (`SerialLogHub.Desktop` için Windows 10/11; API ve Web çapraz platformdur)
+- **.NET 10.0 LTS SDK** (`SerialLogHub.Desktop` için Windows 10/11; API ve Web çapraz platformdur)
 - Opsiyonel: Konteyner dağıtımı için **Docker & Docker Compose**
 
 ### Yerel Kurulum
@@ -182,19 +182,21 @@ Tüm endpoint sözleşmeleri ve SignalR Hub detayları [docs/api/API_DOCUMENTATI
 
 ## 12. Veritabanı Yapısı
 
-`SerialLogHub.Api`, EF Core 8 ile **SQLite** üzerinde 5 tablo yönetir:
+`SerialLogHub.Api`, EF Core 10 ile **SQLite** üzerinde 7 tablo yönetir:
 
 - **`Users`**: `Id`, `Username`, `Email` (benzersiz), `HashedPassword` (tuzlu PBKDF2), `IsEmailVerified`, `VerificationToken`, `ResetPasswordToken`, `TokenExpiryTime`
 - **`UsersPort`**: `Id`, `UserEmail` (benzersiz), `Ports` (tespit edilen COM portlarının JSON listesi)
-- **`Commands`**: `Id`, `Email`, `SelecetdPort`, `BaudRate`, `Message`, `Timestamp`, `CommandID`, `IsProcessed`, `Response`
+- **`Commands`**: `Id`, `Email`, `SelecetdPort`, `BaudRate`, `Message`, `Timestamp`, `CommandID`, `IsProcessed`, `Response`, `Status` (`Pending` / `Dispatched` / `Completed` / `Failed` / `TimedOut`), `DispatchedAt`, `CompletedAt`, `ErrorCategory`, `AttemptCount`
 - **`CommandHistories`**: İşlenen komut ve cihaz yanıtlarının kalıcı denetim geçmişi
 - **`ApiKeys`**: `Id`, `Key` (benzersiz), `ExpiresAt`
+- **`Devices`**: `Id`, `UserEmail`, `DeviceName`, `PortName`, `SerialNumber`, `CreatedAt`, `LastSeenUtc`
+- **`TelemetryRecords`**: `Id`, `DeviceId`, `UserEmail`, `PortName`, `Temperature`, `Humidity`, `RecordedAt`, `IngestedAt`, `IsAnomaly`, `AnomalySeverity`, `AnomalyMethod`, `AnomalyExplanation`, `RawPayload`
 
 ---
 
 ## 13. Testler
 
-- **Otomatik Birim Testleri (`dotnet test`):** 6/6 xUnit testi başarılı (`PasswordSecurityServiceTests`, `SerialTransportTests`).
+- **Otomatik Birim ve Entegrasyon Testleri (`dotnet test SerialLogHub.sln`):** **45/45 xUnit testi başarılı** (`PasswordSecurityServiceTests`, `SerialTransportTests`, `UserControllerTests`, `WebLayerTests`, `AnomalyDetectionEngineTests`, `TelemetryAndSecurityTests`).
 - **3 Katmanlı Uçtan Uca Entegrasyon Testi:** `SerialLogHub.Api` + `SerialLogHub.Web` + `SerialLogHub.Desktop` birlikte çalıştırılarak kimlik doğrulama, WMI + sanal port eşitlemesi, `TEST`, `WLJ`, `WLG`/`WLW`, `WLH0` ve `WLB` 60 satırlık veri akışı doğrulandı.
 - **Tarayıcı Arayüz Doğrulaması:** Login, Dashboard, uPlot grafiği, Anomali filtresi, Sanal COM bağlantısı ve Cihaz Konfigürasyon ekranlarında sıfır tarayıcı konsol hatası doğrulandı.
 

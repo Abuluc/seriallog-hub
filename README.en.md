@@ -3,10 +3,10 @@
 > **[Türkçe Dokümantasyon (`README.tr.md`)](README.tr.md)** | **[Main Page (`README.md`)](README.md)**
 
 [![CI Build & Test](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/Abuluc/seriallog-hub/actions/workflows/ci.yml)
-[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-8.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
-[![EF Core SQLite](https://img.shields.io/badge/EF%20Core-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
-[![xUnit](https://img.shields.io/badge/Tests-xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
+[![.NET 10 LTS](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-10.0-0078D4)](https://learn.microsoft.com/aspnet/core/)
+[![EF Core SQLite](https://img.shields.io/badge/EF%20Core%2010-SQLite-003B57?logo=sqlite&logoColor=white)](https://learn.microsoft.com/ef/core/)
+[![xUnit](https://img.shields.io/badge/Tests-45%2F45%20xUnit%20Passing-16a34a)](tests/SerialLogHub.Tests)
 [![Docker](https://img.shields.io/badge/Deployment-Docker%20%2B%20Render-2496ED?logo=docker&logoColor=white)](deployment/docker-compose.yml)
 
 ## Table of Contents
@@ -33,7 +33,7 @@
 
 ## 1. Project Overview
 
-**SerialLog Hub** is a three-tier DataLogger management platform built with **.NET 8** for configuring USB/RS-232 serial temperature & humidity DataLogger devices, bridging local Windows COM ports to a web workspace, detecting measurement anomalies, and visualizing high-density time-series telemetry.
+**SerialLog Hub** is a three-tier DataLogger management platform built with **.NET 10 LTS** for configuring USB/RS-232 serial temperature & humidity DataLogger devices, bridging local Windows COM ports to a web workspace, detecting measurement anomalies with a 6-method deterministic statistical engine, persisting server-side historical telemetry, and visualizing high-density time-series data.
 
 Originally started as an internship prototype, the system was audited, security-hardened, and re-engineered into a modular, testable architecture with an isolated **Virtual DataLogger Simulator** so developers can evaluate the entire workflow without physical hardware.
 
@@ -60,21 +60,28 @@ Originally started as an internship prototype, the system was audited, security-
 ```mermaid
 flowchart LR
     Browser["Web Browser\n(uPlot, IndexedDB, ExcelJS, SignalR)"]
-    Web["SerialLogHub.Web\n(ASP.NET Core 8 MVC + SignalR)\nPort 3000"]
-    API["SerialLogHub.Api\n(ASP.NET Core 8 Web API)\nPort 8080"]
-    DB[("SQLite\nUsers, UsersPort, Commands,\nCommandHistories, ApiKeys")]
-    Desktop["SerialLogHub.Desktop\n(.NET 8 Windows COM Bridge)"]
+    Web["SerialLogHub.Web\n(ASP.NET Core 10 MVC + SignalR)\nPort 3000"]
+    API["SerialLogHub.Api\n(ASP.NET Core 10 Web API)\nPort 8080"]
+    DB[("SQLite\nUsers, UsersPort, Commands,\nCommandHistories, ApiKeys,\nDevices, TelemetryRecords")]
+    Desktop["SerialLogHub.Desktop\n(.NET 10 Windows COM Bridge)"]
     HW["DataLogger Device\n(Real COM / Virtual COM99)"]
 
     Browser <-->|"HTTP + Cookie Auth + SignalR"| Web
-    Web <-->|"REST JSON + X-API-KEY"| API
-    API <-->|"EF Core 8"| DB
-    Desktop <-->|"REST JSON + X-API-KEY"| API
+    Web <-->|"REST JSON + X-API-KEY + X-OPERATOR-EMAIL"| API
+    API <-->|"EF Core 10"| DB
+    Desktop <-->|"REST JSON + X-API-KEY + X-OPERATOR-EMAIL"| API
     Desktop -->|"Webhooks + X-BRIDGE-KEY"| Web
     Desktop <-->|"System.IO.Ports / Simulator"| HW
 ```
 
-Detailed sequence diagrams are documented in [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
+Detailed sequence diagrams and engineering reports are documented in:
+- [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
+- [docs/FINAL_ENGINEERING_REPORT.md](docs/FINAL_ENGINEERING_REPORT.md)
+- [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md)
+- [docs/COM_BRIDGE_RELIABILITY.md](docs/COM_BRIDGE_RELIABILITY.md)
+- [docs/TELEMETRY_STORAGE.md](docs/TELEMETRY_STORAGE.md)
+- [docs/ANOMALY_DETECTION.md](docs/ANOMALY_DETECTION.md)
+- [docs/SIGNALR_ARCHITECTURE.md](docs/SIGNALR_ARCHITECTURE.md)
 
 ---
 
@@ -82,10 +89,10 @@ Detailed sequence diagrams are documented in [docs/architecture/ARCHITECTURE.md]
 
 | Layer | Stack |
 | :--- | :--- |
-| **Backend API** | C#, .NET 8, ASP.NET Core Web API, EF Core 8, SQLite, Swagger/OpenAPI, Built-in Rate Limiter |
-| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
-| **Desktop COM Bridge** | .NET 8 Windows Forms (`net8.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
-| **Testing & DevOps** | xUnit, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
+| **Backend API** | C#, .NET 10 LTS, ASP.NET Core Web API, EF Core 10, SQLite, Swagger/OpenAPI, Built-in Rate Limiter |
+| **Web Dashboard** | ASP.NET Core 10 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
+| **Desktop COM Bridge** | .NET 10 Windows Forms (`net10.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
+| **Testing & DevOps** | xUnit (45 tests), GitHub Actions CI, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
 
 ---
 
@@ -138,7 +145,7 @@ When running in **Demo / Simulation Mode**, the UI displays a clear **Simulation
 ## 9. Installation
 
 ### Prerequisites
-- **.NET 8.0 SDK** (Windows 10/11 required for `SerialLogHub.Desktop`; API and Web are cross-platform)
+- **.NET 10.0 LTS SDK** (Windows 10/11 required for `SerialLogHub.Desktop`; API and Web are cross-platform)
 - Optional: **Docker & Docker Compose** for containerized deployment
 
 ### Local Setup
@@ -182,21 +189,23 @@ Full endpoint contracts and SignalR Hub documentation are in [docs/api/API_DOCUM
 
 ## 12. Database Structure
 
-`SerialLogHub.Api` uses **SQLite** via EF Core 8 with 5 tables:
+`SerialLogHub.Api` uses **SQLite** via EF Core 10 with 7 tables:
 
 - **`Users`**: `Id`, `Username`, `Email` (unique), `HashedPassword` (salted PBKDF2), `IsEmailVerified`, `VerificationToken`, `ResetPasswordToken`, `TokenExpiryTime`
 - **`UsersPort`**: `Id`, `UserEmail` (unique), `Ports` (JSON array of detected COM ports)
-- **`Commands`**: `Id`, `Email`, `SelecetdPort`, `BaudRate`, `Message`, `Timestamp`, `CommandID`, `IsProcessed`, `Response`
+- **`Commands`**: `Id`, `Email`, `SelecetdPort`, `BaudRate`, `Message`, `Timestamp`, `CommandID`, `IsProcessed`, `Response`, `Status` (`Pending` / `Dispatched` / `Completed` / `Failed` / `TimedOut`), `DispatchedAt`, `CompletedAt`, `ErrorCategory`, `AttemptCount`
 - **`CommandHistories`**: Permanent audit log of processed commands and device responses
 - **`ApiKeys`**: `Id`, `Key` (unique), `ExpiresAt`
+- **`Devices`**: `Id`, `UserEmail`, `DeviceName`, `PortName`, `SerialNumber`, `CreatedAt`, `LastSeenUtc`
+- **`TelemetryRecords`**: `Id`, `DeviceId`, `UserEmail`, `PortName`, `Temperature`, `Humidity`, `RecordedAt`, `IngestedAt`, `IsAnomaly`, `AnomalySeverity`, `AnomalyMethod`, `AnomalyExplanation`, `RawPayload`
 
 ---
 
 ## 13. Testing
 
-- **Automated Unit Tests (`dotnet test`):** 6/6 xUnit tests passing (`PasswordSecurityServiceTests`, `SerialTransportTests`).
-- **End-to-End 3-Tier Verification:** Verified `SerialLogHub.Api` + `SerialLogHub.Web` + `SerialLogHub.Desktop` (headless virtual device) across authentication, WMI + virtual port sync, `TEST`, `WLJ`, `WLG`/`WLW`, `WLH0`, and `WLB` 60-row telemetry streaming.
-- **Browser UI Verification:** Verified zero console errors across Login, Dashboard, uPlot charting, Anomaly filtering, Virtual COM connection, and Device Configuration screens.
+- **Automated Test Suite (`dotnet test SerialLogHub.sln`):** **45/45 xUnit tests passing** (`PasswordSecurityServiceTests`, `SerialTransportTests`, `UserControllerTests`, `WebLayerTests`, `AnomalyDetectionEngineTests`, `TelemetryAndSecurityTests`).
+- **End-to-End 3-Tier Verification:** Verified `SerialLogHub.Api` + `SerialLogHub.Web` + `SerialLogHub.Desktop` (headless virtual device) across authentication, BOLA/IDOR blocking, WMI + virtual port sync, `TEST`, `WLJ`, `WLG`/`WLW`, `WLH0`, and `WLB` telemetry streaming & SQLite persistence.
+- **Browser UI Verification:** Verified zero console errors across Login, Dashboard, uPlot + Chart.js charting, Anomaly filtering, Virtual COM connection, Server Telemetry Archive, and Guided 6-Step Device Configuration Wizard.
 
 ---
 
