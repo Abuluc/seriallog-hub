@@ -109,9 +109,12 @@ Ayrıntılı akış diyagramları için [docs/architecture/ARCHITECTURE.md](docs
 
 ## 7. Canlı Demo
 
-> **Yayınlama Durumu:** Uygulama Docker (`deployment/Dockerfile.api`, `deployment/Dockerfile.web`, `deployment/docker-compose.yml`) ve Render Blueprint (`deployment/render.yaml`) ile bulut dağıtımına hazırdır ve Bulut Simülasyon Modu yerel olarak doğrulanmıştır. Seçilen hosting sağlayıcısında yayınlandığında gerçek HTTPS canlı demo bağlantısı buraya eklenecektir.
+- **Web Dashboard:** [https://serialloghub-web.onrender.com](https://serialloghub-web.onrender.com)
+- **Backend REST API Durum Kontrolü:** [https://serialloghub-api.onrender.com/api/health](https://serialloghub-api.onrender.com/api/health)
 
-Hosting seçenekleri, maliyet karşılaştırması ve Docker kurulumu için [docs/demo/DEMO_GUIDE.md](docs/demo/DEMO_GUIDE.md) dosyasına bakabilirsiniz.
+> **Not:** Render Ücretsiz (Free) planı üzerinde otomatik HTTPS ile barındırılmaktadır. Servis uyku modundaysa ilk açılış 30–50 saniye sürebilir. `/Login` ekranında **"Fill Demo Operator Credentials"** butonuna tıklayarak dashboard'u, uPlot telemetri grafiğini, anomali tespitini ve Sanal DataLogger (`COM99`) ayar ekranlarını hemen deneyebilirsiniz.
+
+Kendi sunucunuzda Docker Compose veya Render Blueprint ile kurmak için [docs/demo/DEMO_GUIDE.md](docs/demo/DEMO_GUIDE.md) dosyasına bakabilirsiniz.
 
 ---
 

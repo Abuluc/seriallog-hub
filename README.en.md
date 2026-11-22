@@ -109,9 +109,12 @@ Detailed sequence diagrams are documented in [docs/architecture/ARCHITECTURE.md]
 
 ## 7. Live Demo
 
-> **Deployment Status:** Containerized (`deployment/Dockerfile.api`, `deployment/Dockerfile.web`, `deployment/docker-compose.yml`, `deployment/render.yaml`) and verified locally in Cloud Simulation Mode. A public HTTPS Live Demo URL will be added here once deployed to the selected cloud host.
+- **Web Dashboard:** [https://serialloghub-web.onrender.com](https://serialloghub-web.onrender.com)
+- **Backend REST API Health:** [https://serialloghub-api.onrender.com/api/health](https://serialloghub-api.onrender.com/api/health)
 
-See [docs/demo/DEMO_GUIDE.md](docs/demo/DEMO_GUIDE.md) for hosting options (Render, Fly.io, Railway, VPS) and one-command Docker deployment instructions.
+> **Note:** Hosted on Render Free Tier with automatic HTTPS. If the instance has been idle, the first request may take 30–50 seconds to spin up. Click **"Fill Demo Operator Credentials"** on `/Login` to explore the dashboard, interactive uPlot telemetry, anomaly detection, and Virtual DataLogger (`COM99`) configuration.
+
+See [docs/demo/DEMO_GUIDE.md](docs/demo/DEMO_GUIDE.md) for self-hosting via Docker Compose or Render Blueprint.
 
 ---
 

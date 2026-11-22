@@ -8,9 +8,16 @@
 [![ASP.NET Core](https://img.shields.io/badge/ASP.NET%20Core-MVC%20%2B%20Web%20API-0078D4)](https://learn.microsoft.com/aspnet/core/)
 [![SignalR](https://img.shields.io/badge/SignalR-Real--Time-0ea5e9)](https://learn.microsoft.com/aspnet/core/signalr/)
 [![SQLite](https://img.shields.io/badge/SQLite-EF%20Core%208-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Docker Ready](https://img.shields.io/badge/Docker-Compose%20Ready-2496ED?logo=docker&logoColor=white)](deployment/docker-compose.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Render-46E3B7?logo=render&logoColor=black)](https://serialloghub-web.onrender.com)
 
 ---
+
+### Live Demo / Canlı Demo
+
+**[Launch Live Web Demo (`serialloghub-web.onrender.com`)](https://serialloghub-web.onrender.com)** &nbsp;|&nbsp; **[API Health Check (`serialloghub-api.onrender.com/api/health`)](https://serialloghub-api.onrender.com/api/health)**
+
+*(Hosted on Render Free Tier — initial cold start may take 30–50 seconds. Use **"Fill Demo Operator Credentials"** on the login page.)*
 
 ### Choose Your Language / Dil Seçimi
 
