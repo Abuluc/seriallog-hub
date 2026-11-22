@@ -1,0 +1,432 @@
+@{
+    ViewData["Title"] = "Device Configuration Wizard";
+}
+
+<div class="slh-wizard-shell">
+    <!-- Top Connection Summary Bar -->
+    <div class="slh-card slh-wizard-banner">
+        <div>
+            <div class="slh-card-title">
+                <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--slh-primary);"></i>
+                <span>Guided 6-Step DataLogger Setup</span>
+            </div>
+            <p class="slh-muted-sm">Progress sequentially through each hardware parameter. You may skip optional steps, then apply or finish on the final step.</p>
+        </div>
+        <div class="slh-toolbar">
+            <span class="slh-badge slh-badge-ok" id="wizardPortBadge">
+                <i class="fa-solid fa-plug-circle-check"></i> Checking connection...
+            </span>
+            <span class="slh-badge slh-badge-demo" id="wizardStepCounter">Step 1 of 6</span>
+        </div>
+    </div>
+
+    <!-- Non-Clickable Sequential Progress Stepper -->
+    <div class="slh-stepper" id="wizardStepper" aria-label="Configuration progress">
+        <div class="slh-step active" data-step="1">
+            <div class="slh-step-circle">1</div>
+            <div class="slh-step-label">Description</div>
+        </div>
+        <div class="slh-step" data-step="2">
+            <div class="slh-step-circle">2</div>
+            <div class="slh-step-label">Delayed Start</div>
+        </div>
+        <div class="slh-step" data-step="3">
+            <div class="slh-step-circle">3</div>
+            <div class="slh-step-label">Clock Sync</div>
+        </div>
+        <div class="slh-step" data-step="4">
+            <div class="slh-step-circle">4</div>
+            <div class="slh-step-label">Format Flash</div>
+        </div>
+        <div class="slh-step" data-step="5">
+            <div class="slh-step-circle">5</div>
+            <div class="slh-step-label">Thresholds</div>
+        </div>
+        <div class="slh-step" data-step="6">
+            <div class="slh-step-circle">6</div>
+            <div class="slh-step-label">Interval &amp; Start</div>
+        </div>
+    </div>
+
+    <!-- Step Panels -->
+    <div class="slh-card slh-wizard-body">
+        <!-- Step 1: Device Description -->
+        <div class="slh-wizard-panel active" data-panel="1">
+            <div class="slh-card-header">
+                <div class="slh-card-title"><i class="fa-solid fa-comment-dots"></i> Step 1 — Device Description</div>
+                <code class="slh-cmd-pill">WLW / WLG</code>
+            </div>
+            <p class="slh-muted-sm" style="margin-bottom: 16px;">
+                Assign an uppercase location tag stored in the DataLogger's onboard memory.
+                Current device label: <strong id="wizCurrentComment">Reading from device...</strong>
+            </p>
+            <div class="slh-form-group">
+                <label for="wizCommentInput">New Device Description</label>
+                <input type="text" id="wizCommentInput" class="slh-input" placeholder="e.g. COLD_STORAGE_ZONE_A1" maxlength="32" />
+            </div>
+        </div>
+
+        <!-- Step 2: Delayed Start -->
+        <div class="slh-wizard-panel" data-panel="2">
+            <div class="slh-card-header">
+                <div class="slh-card-title"><i class="fa-solid fa-hourglass-start"></i> Step 2 — Delayed Logging Start</div>
+                <code class="slh-cmd-pill">WLS0</code>
+            </div>
+            <p class="slh-muted-sm" style="margin-bottom: 16px;">
+                Schedule a future time today when the DataLogger should begin recording measurements. Skip this step to start immediately.
+            </p>
+            <div class="slh-form-group" style="max-width: 280px;">
+                <label for="wizDelayTime">Scheduled Start Time (HH:MM)</label>
+                <input type="time" id="wizDelayTime" class="slh-input" value="14:00" />
+            </div>
+        </div>
+
+        <!-- Step 3: Clock Calibration -->
+        <div class="slh-wizard-panel" data-panel="3">
+            <div class="slh-card-header">
+                <div class="slh-card-title"><i class="fa-solid fa-clock"></i> Step 3 — RTC Clock Calibration</div>
+                <code class="slh-cmd-pill">WLH0 / WLH1</code>
+            </div>
+            <p class="slh-muted-sm" style="margin-bottom: 16px;">
+                Synchronize the DataLogger's internal Real-Time Clock with your system clock to ensure accurate timestamps.
+            </p>
+            <div class="slh-stat-strip">
+                <div class="slh-stat-box">
+                    <span>Device RTC Clock (WLH0)</span>
+                    <strong id="wizDeviceClock">Reading...</strong>
+                </div>
+                <div class="slh-stat-box">
+                    <span>Host System Clock</span>
+                    <strong id="wizHostClock">--</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Format Flash -->
+        <div class="slh-wizard-panel" data-panel="4">
+            <div class="slh-card-header">
+                <div class="slh-card-title"><i class="fa-solid fa-eraser"></i> Step 4 — Format Flash Memory</div>
+                <code class="slh-cmd-pill">WLE1</code>
+            </div>
+            <div class="slh-danger-callout">
+                <strong><i class="fa-solid fa-triangle-exclamation"></i> Destructive Operation:</strong>
+                Applying this step sends <code>WLE1</code> and permanently erases all stored measurements on the DataLogger. Click <strong>Skip Step</strong> if you want to preserve existing logs.
+            </div>
+            <label style="display: inline-flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer;">
+                <input type="checkbox" id="wizConfirmFormat" />
+                I confirm that I want to erase the device flash memory before starting a new logging session.
+            </label>
+        </div>
+
+        <!-- Step 5: Alarm Thresholds -->
+        <div class="slh-wizard-panel" data-panel="5">
+            <div class="slh-card-header">
+                <div class="slh-card-title"><i class="fa-solid fa-temperature-half"></i> Step 5 — Temperature &amp; Humidity Alarm Thresholds</div>
+                <code class="slh-cmd-pill">WLM</code>
+            </div>
+            <p class="slh-muted-sm" style="margin-bottom: 16px;">
+                Define safe operating boundaries for temperature (°C) and relative humidity (%).
+            </p>
+            <div class="slh-form-row">
+                <div class="slh-form-group">
+                    <label for="wizMinTemp">Min Temperature (°C)</label>
+                    <input type="number" id="wizMinTemp" class="slh-input" value="2" />
+                </div>
+                <div class="slh-form-group">
+                    <label for="wizMaxTemp">Max Temperature (°C)</label>
+                    <input type="number" id="wizMaxTemp" class="slh-input" value="35" />
+                </div>
+            </div>
+            <div class="slh-form-row">
+                <div class="slh-form-group">
+                    <label for="wizMinHum">Min Humidity (%)</label>
+                    <input type="number" id="wizMinHum" class="slh-input" value="20" />
+                </div>
+                <div class="slh-form-group">
+                    <label for="wizMaxHum">Max Humidity (%)</label>
+                    <input type="number" id="wizMaxHum" class="slh-input" value="80" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 6: Sampling Interval & Auto-Start -->
+        <div class="slh-wizard-panel" data-panel="6">
+            <div class="slh-card-header">
+                <div class="slh-card-title"><i class="fa-solid fa-stopwatch"></i> Step 6 — Sampling Interval &amp; Auto-Start</div>
+                <code class="slh-cmd-pill">WLA / WLV1</code>
+            </div>
+            <p class="slh-muted-sm" style="margin-bottom: 16px;">
+                Configure how frequently the DataLogger records a reading (minimum 10 seconds) and optionally enable automatic logging start.
+            </p>
+            <div class="slh-form-row" style="grid-template-columns: repeat(3, 1fr);">
+                <div class="slh-form-group">
+                    <label for="wizHours">Hours (0–23)</label>
+                    <input type="number" id="wizHours" class="slh-input" value="0" min="0" max="23" />
+                </div>
+                <div class="slh-form-group">
+                    <label for="wizMinutes">Minutes (0–59)</label>
+                    <input type="number" id="wizMinutes" class="slh-input" value="0" min="0" max="59" />
+                </div>
+                <div class="slh-form-group">
+                    <label for="wizSeconds">Seconds (min 10)</label>
+                    <input type="number" id="wizSeconds" class="slh-input" value="20" min="0" max="59" />
+                </div>
+            </div>
+            <label style="display: inline-flex; align-items: center; gap: 8px; font-size: 0.88rem; margin-top: 4px; cursor: pointer;">
+                <input type="checkbox" id="wizAutoStart" checked />
+                Enable Auto-Start Logging (<code>WLV1</code>) upon saving
+            </label>
+        </div>
+
+        <!-- Completion Summary -->
+        <div class="slh-wizard-panel" data-panel="7">
+            <div class="slh-card-header">
+                <div class="slh-card-title" style="color: var(--slh-success);">
+                    <i class="fa-solid fa-circle-check"></i> Configuration Wizard Complete
+                </div>
+            </div>
+            <p class="slh-muted-sm" style="margin-bottom: 14px;">Review the summary of applied and skipped steps below:</p>
+            <ul id="wizardSummaryList" class="slh-summary-list"></ul>
+            <div style="margin-top: 20px;">
+                <a href="/Home" class="slh-btn slh-btn-primary">Return to Telemetry Dashboard</a>
+                <button type="button" id="wizRestartBtn" class="slh-btn slh-btn-outline" style="margin-left: 8px;">Run Wizard Again</button>
+            </div>
+        </div>
+
+        <!-- Sequential Footer Controls -->
+        <div class="slh-wizard-footer" id="wizardFooter">
+            <button type="button" id="wizPrevBtn" class="slh-btn slh-btn-outline" disabled>
+                <i class="fa-solid fa-arrow-left"></i> Previous
+            </button>
+            <div class="slh-toolbar">
+                <button type="button" id="wizSkipBtn" class="slh-btn slh-btn-ghost">
+                    Skip Step <i class="fa-solid fa-forward"></i>
+                </button>
+                <button type="button" id="wizApplyNextBtn" class="slh-btn slh-btn-primary">
+                    Save &amp; Continue <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            "use strict";
+
+            const totalSteps = 6;
+            let currentStep = 1;
+            const stepStatus = {}; // { 1: "Applied (...)" | "Skipped" }
+            const stepNames = {
+                1: "Device Description (WLG)",
+                2: "Delayed Start (WLS0)",
+                3: "RTC Clock Calibration (WLH1)",
+                4: "Format Flash Memory (WLE1)",
+                5: "Alarm Thresholds (WLM)",
+                6: "Sampling Interval & Auto-Start (WLA/WLV1)"
+            };
+
+            function getConn() {
+                return window.SerialLogHub.getConnectionCookie();
+            }
+
+            function updateStepperUi() {
+                document.querySelectorAll(".slh-wizard-panel").forEach(p => {
+                    p.classList.toggle("active", Number(p.dataset.panel) === currentStep);
+                });
+
+                document.querySelectorAll("#wizardStepper .slh-step").forEach(s => {
+                    const n = Number(s.dataset.step);
+                    s.classList.remove("active", "completed", "skipped");
+                    if (n === currentStep) s.classList.add("active");
+                    else if (stepStatus[n] && stepStatus[n].startsWith("Applied")) s.classList.add("completed");
+                    else if (stepStatus[n] === "Skipped") s.classList.add("skipped");
+                });
+
+                const counter = document.getElementById("wizardStepCounter");
+                const footer = document.getElementById("wizardFooter");
+                const prevBtn = document.getElementById("wizPrevBtn");
+                const applyBtn = document.getElementById("wizApplyNextBtn");
+
+                if (currentStep > totalSteps) {
+                    counter.textContent = "Completed";
+                    footer.style.display = "none";
+                    renderSummary();
+                    return;
+                }
+
+                footer.style.display = "flex";
+                counter.textContent = `Step ${currentStep} of ${totalSteps}`;
+                prevBtn.disabled = currentStep === 1;
+                applyBtn.innerHTML = currentStep === totalSteps
+                    ? 'Apply &amp; Finish <i class="fa-solid fa-check"></i>'
+                    : 'Save &amp; Continue <i class="fa-solid fa-arrow-right"></i>';
+
+                if (currentStep === 1) loadCurrentComment();
+                if (currentStep === 3) loadDeviceClock();
+            }
+
+            function renderSummary() {
+                const list = document.getElementById("wizardSummaryList");
+                list.innerHTML = "";
+                for (let i = 1; i <= totalSteps; i++) {
+                    const status = stepStatus[i] || "Skipped";
+                    const badgeClass = status.startsWith("Applied") ? "slh-badge-ok" : "slh-badge-warn";
+                    const li = document.createElement("li");
+                    li.innerHTML = `<span><strong>Step ${i}:</strong> ${stepNames[i]}</span><span class="slh-badge ${badgeClass}">${status}</span>`;
+                    list.appendChild(li);
+                }
+            }
+
+            function loadCurrentComment() {
+                const conn = getConn();
+                if (!conn) return;
+                $.get("/Settings/GetComm", { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud })
+                    .done(res => {
+                        const parts = (res.responseMessage || "").split(",");
+                        document.getElementById("wizCurrentComment").textContent = parts[3] || res.responseMessage || "None";
+                    })
+                    .fail(() => { document.getElementById("wizCurrentComment").textContent = "Unavailable"; });
+            }
+
+            function loadDeviceClock() {
+                const conn = getConn();
+                document.getElementById("wizHostClock").textContent = new Date().toLocaleString();
+                if (!conn) return;
+                $.post("/Settings/GetCalibrationTime", {
+                    model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
+                }).done(res => {
+                    const p = (res.response || "").split(",");
+                    document.getElementById("wizDeviceClock").textContent = p.length >= 9
+                        ? `${p[3]}-${p[4]}-${p[5]} ${p[6]}:${p[7]}:${p[8]}`
+                        : (res.response || "No response");
+                }).fail(() => { document.getElementById("wizDeviceClock").textContent = "Unavailable"; });
+            }
+
+            async function applyCurrentStep() {
+                const conn = getConn();
+                if (!conn || !conn.currentPort) {
+                    toastr.error("No active DataLogger connection. Connect from Dashboard first.");
+                    return;
+                }
+
+                window.SerialLogHub.showLoading(`Applying Step ${currentStep}...`);
+                try {
+                    if (currentStep === 1) {
+                        const comment = document.getElementById("wizCommentInput").value.trim().toUpperCase();
+                        if (!comment) { toastr.warning("Enter a description or click Skip Step."); return; }
+                        const res = await $.post("/Settings/Settocomment", {
+                            model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud },
+                            Comment: comment
+                        });
+                        if (res.status !== "success") throw new Error(res.message);
+                        stepStatus[1] = `Applied (${comment})`;
+                        toastr.success("Device description saved.");
+                    } else if (currentStep === 2) {
+                        const t = document.getElementById("wizDelayTime").value;
+                        if (!t) { toastr.warning("Select a start time or click Skip Step."); return; }
+                        const today = new Date().toISOString().slice(2, 10);
+                        const res = await $.post("/Settings/SetDelayStart", {
+                            Time: `${today},${t}:00`,
+                            model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
+                        });
+                        if (res.status !== "success") throw new Error(res.message);
+                        stepStatus[2] = `Applied (${t})`;
+                        toastr.success("Delayed start configured.");
+                    } else if (currentStep === 3) {
+                        const d = new Date();
+                        const formatted = `${String(d.getFullYear()).slice(2)}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")},${String(d.getHours()).padStart(2, "0")}-${String(d.getMinutes()).padStart(2, "0")}-${String(d.getSeconds()).padStart(2, "0")}`;
+                        const res = await $.post("/Settings/UpdateDeviceTime", {
+                            deviceTime: formatted,
+                            model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
+                        });
+                        if (res.status !== "success") throw new Error(res.message);
+                        stepStatus[3] = "Applied (Synced)";
+                        toastr.success("RTC clock synchronized.");
+                    } else if (currentStep === 4) {
+                        if (!document.getElementById("wizConfirmFormat").checked) {
+                            toastr.warning("Confirm flash erase checkbox or click Skip Step.");
+                            return;
+                        }
+                        const res = await $.get("/Settings/Format", {
+                            SelectedPort: conn.currentPort,
+                            SelectedBaudRate: conn.currentBaud
+                        });
+                        if (res.status !== "success") throw new Error(res.message);
+                        stepStatus[4] = "Applied (Formatted)";
+                        toastr.success("Device flash memory formatted.");
+                    } else if (currentStep === 5) {
+                        const minT = document.getElementById("wizMinTemp").value;
+                        const maxT = document.getElementById("wizMaxTemp").value;
+                        const minH = document.getElementById("wizMinHum").value;
+                        const maxH = document.getElementById("wizMaxHum").value;
+                        const res = await $.post("/Settings/SetMM", {
+                            model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud },
+                            mmModel: { MinTemp: minT, MaxTemp: maxT, MinHum: minH, MaxHum: maxH }
+                        });
+                        if (res.status !== "success") throw new Error(res.message);
+                        stepStatus[5] = `Applied (${minT}–${maxT}°C, ${minH}–${maxH}%)`;
+                        toastr.success("Alarm thresholds applied.");
+                    } else if (currentStep === 6) {
+                        const h = parseInt(document.getElementById("wizHours").value, 10) || 0;
+                        const m = parseInt(document.getElementById("wizMinutes").value, 10) || 0;
+                        const s = parseInt(document.getElementById("wizSeconds").value, 10) || 0;
+                        const total = h * 3600 + m * 60 + s;
+                        if (total < 10) { toastr.error("Interval must be at least 10 seconds."); return; }
+                        const res = await $.post("/Settings/SetTime", {
+                            model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud },
+                            Time: total
+                        });
+                        if (res.status !== "success") throw new Error(res.message);
+
+                        if (document.getElementById("wizAutoStart").checked) {
+                            await $.post("/Settings/AutoStart", {
+                                model: { SelectedPort: conn.currentPort, SelectedBaudRate: conn.currentBaud }
+                            });
+                            stepStatus[6] = `Applied (${total}s + AutoStart)`;
+                        } else {
+                            stepStatus[6] = `Applied (${total}s)`;
+                        }
+                        toastr.success("Sampling interval configured.");
+                    }
+
+                    currentStep++;
+                    updateStepperUi();
+                } catch (err) {
+                    toastr.error(err.message || "Device command failed.");
+                } finally {
+                    window.SerialLogHub.hideLoading();
+                }
+            }
+
+            document.addEventListener("DOMContentLoaded", function () {
+                const conn = getConn();
+                const badge = document.getElementById("wizardPortBadge");
+                if (conn && conn.currentPort) {
+                    badge.innerHTML = `<i class="fa-solid fa-plug-circle-check"></i> ${conn.currentPort} @@ ${conn.currentBaud}`;
+                } else {
+                    badge.className = "slh-badge slh-badge-danger";
+                    badge.innerHTML = `<i class="fa-solid fa-plug-circle-xmark"></i> Not Connected`;
+                }
+
+                document.getElementById("wizPrevBtn").addEventListener("click", () => {
+                    if (currentStep > 1) { currentStep--; updateStepperUi(); }
+                });
+                document.getElementById("wizSkipBtn").addEventListener("click", () => {
+                    if (!stepStatus[currentStep]) stepStatus[currentStep] = "Skipped";
+                    currentStep++;
+                    updateStepperUi();
+                });
+                document.getElementById("wizApplyNextBtn").addEventListener("click", applyCurrentStep);
+                document.getElementById("wizRestartBtn").addEventListener("click", () => {
+                    currentStep = 1;
+                    Object.keys(stepStatus).forEach(k => delete stepStatus[k]);
+                    updateStepperUi();
+                });
+
+                updateStepperUi();
+            });
+        })();
+    </script>
+}

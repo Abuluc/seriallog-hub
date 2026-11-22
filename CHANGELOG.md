@@ -2,6 +2,16 @@
 
 All notable changes to **SerialLog Hub** are documented in this file.
 
+## [1.1.0] - 2026-11-22
+
+### Added
+- **Guided 6-Step Device Configuration Wizard (`/Settings`):** Replaced individual sidebar configuration links with a single sequential wizard supporting **Previous**, **Skip Step**, **Save & Continue**, non-clickable visual progress stepper (Completed / Skipped / Active), and a completion summary screen.
+- **Multi-Chart Engineering Analytics Dashboard:** Added live **Min / Avg / Max** telemetry statistics strip plus 3 new interactive Chart.js visualizations alongside uPlot:
+  - Temperature Distribution Histogram (Bar Chart)
+  - Temperature vs. Humidity Correlation (Scatter Plot highlighting anomalies)
+  - Health & Anomaly Breakdown (Doughnut Chart)
+- **Updated Documentation & Screenshots:** Refreshed live screenshots and bilingual `README.en.md` / `README.tr.md` with the new analytics dashboard and guided configuration wizard.
+
 ## [1.0.0] - 2026-11-22
 
 ### Added

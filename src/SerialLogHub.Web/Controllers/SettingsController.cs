@@ -17,13 +17,13 @@ public class SettingsController : Controller
 
     private string? CurrentUserEmail => User.Identity?.Name;
 
-    public IActionResult Index() => RedirectToAction(nameof(AddComm));
-    public IActionResult Time() => View();
-    public IActionResult Calibration() => View();
-    public IActionResult AddComm() => View();
-    public IActionResult DelayStart() => View();
-    public IActionResult TempHum() => View();
-    public IActionResult Formatting() => View();
+    public IActionResult Index() => View();
+    public IActionResult Time() => RedirectToAction(nameof(Index));
+    public IActionResult Calibration() => RedirectToAction(nameof(Index));
+    public IActionResult AddComm() => RedirectToAction(nameof(Index));
+    public IActionResult DelayStart() => RedirectToAction(nameof(Index));
+    public IActionResult TempHum() => RedirectToAction(nameof(Index));
+    public IActionResult Formatting() => RedirectToAction(nameof(Index));
 
     [HttpPost]
     public Task<JsonResult> SetDelayStart(CalibrationModel model, string Time, CancellationToken ct)

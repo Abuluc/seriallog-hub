@@ -40,9 +40,13 @@ Originally started as an internship prototype, the system was audited, security-
 
 ## 2. Key Features
 
-- **Real-Time Telemetry Graphing:** Interactive **uPlot** dual-series Temperature (°C) and Humidity (%) chart with hover tooltips.
+- **Multi-Chart Telemetry Analytics:**
+  - **Time-Series Telemetry Chart (uPlot):** Dual-series Temperature (°C) and Humidity (%) over time with hover tooltips and live **Min / Avg / Max** stat strip.
+  - **Temperature Distribution Histogram (Chart.js):** Frequency distribution across thermal buckets (`<20°C`, `20–22°C`, `22–24°C`, `24–26°C`, `>26°C`).
+  - **Temperature vs. Humidity Correlation Scatter Plot (Chart.js):** Plots every measurement with normal points in blue and anomaly outliers highlighted in red.
+  - **Health & Anomaly Breakdown Doughnut (Chart.js):** Visualizes Normal vs. Temperature Anomaly vs. Humidity Anomaly vs. Dual Spike proportions.
 - **Automated Anomaly Detection:** Flags sudden rate-of-change spikes and out-of-range temperature/humidity readings with dedicated **Anomalies Only** filtering.
-- **6-Step Device Configuration Wizard:** Device Description (`WLG`/`WLW`), Delayed Start (`WLS0`), RTC Clock Calibration (`WLH0`/`WLH1`), Flash Memory Format (`WLE1`), Alarm Thresholds (`WLM`), and Sampling Interval / Auto-Start (`WLA`/`WLV1`).
+- **Guided 6-Step Device Configuration Wizard:** Single-entry sequential workflow from the sidebar (no ad-hoc sidebar jumping) with **Previous**, **Skip Step**, **Save & Continue**, visual progress stepper (Completed / Skipped / Active), and final summary screen covering Device Description (`WLG`/`WLW`), Delayed Start (`WLS0`), RTC Clock Calibration (`WLH0`/`WLH1`), Flash Memory Format (`WLE1`), Alarm Thresholds (`WLM`), and Sampling Interval / Auto-Start (`WLA`/`WLV1`).
 - **COM Port Bridge with WMI Discovery:** Enumerates physical Windows COM ports with friendly hardware names (`Win32_SerialPort`) and streams `WLB` logs over SignalR.
 - **Browser IndexedDB History & Excel Export:** Persists uploaded CSV datasets and device dumps locally in IndexedDB and exports filtered tables to `.xlsx` via ExcelJS.
 - **Isolated Demo & Simulation Mode:** Supports both local Desktop Virtual COM Port (`COM99`) and optional Cloud Demo Responder for zero-hardware evaluation.
@@ -77,7 +81,7 @@ Detailed sequence diagrams are documented in [docs/architecture/ARCHITECTURE.md]
 | Layer | Stack |
 | :--- | :--- |
 | **Backend API** | C#, .NET 8, ASP.NET Core Web API, EF Core 8, SQLite, Swagger/OpenAPI, Built-in Rate Limiter |
-| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, IndexedDB, ExcelJS, FileSaver.js, Toastr |
+| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
 | **Desktop COM Bridge** | .NET 8 Windows Forms (`net8.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
 | **Testing & DevOps** | xUnit, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
 
@@ -93,17 +97,17 @@ Detailed sequence diagrams are documented in [docs/architecture/ARCHITECTURE.md]
 
 ## 6. Screenshots
 
-| Login Screen (with Demo Helper) | Telemetry Dashboard & uPlot Chart |
+| Login Screen (with Demo Helper) | Telemetry Dashboard, Stats & uPlot Chart |
 | :---: | :---: |
 | ![Login Screen](docs/screenshots/01-login.png) | ![Telemetry Dashboard](docs/screenshots/02-dashboard-telemetry.png) |
 
-| Anomaly Table & Connected Serial Terminal | Device Description Configuration (`WLG`/`WLW`) |
+| Multi-Chart Analytics (Histogram & Scatter) | Anomaly Table & Connected Serial Terminal |
 | :---: | :---: |
-| ![Anomalies and Serial Terminal](docs/screenshots/03-anomalies-and-serial.png) | ![Device Configuration](docs/screenshots/04-device-configuration.png) |
+| ![Multi-Chart Analytics](docs/screenshots/03-multi-chart-analytics.png) | ![Anomalies and Serial Terminal](docs/screenshots/04-anomalies-and-serial.png) |
 
-| Alarm Threshold Configuration (`WLM`) |
+| Guided 6-Step Device Configuration Wizard (Sequential + Skip) |
 | :---: |
-| ![Alarm Thresholds](docs/screenshots/05-alarm-thresholds.png) |
+| ![Configuration Wizard](docs/screenshots/05-configuration-wizard.png) |
 
 ---
 

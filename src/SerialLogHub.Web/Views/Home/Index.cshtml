@@ -67,11 +67,59 @@
         </div>
     </div>
 
+    <div class="slh-stat-strip">
+        <div class="slh-stat-box"><span>Min Temp</span><strong id="statMinTemp">-- °C</strong></div>
+        <div class="slh-stat-box"><span>Avg Temp</span><strong id="statAvgTemp">-- °C</strong></div>
+        <div class="slh-stat-box"><span>Max Temp</span><strong id="statMaxTemp">-- °C</strong></div>
+        <div class="slh-stat-box"><span>Min Humidity</span><strong id="statMinHum">-- %</strong></div>
+        <div class="slh-stat-box"><span>Avg Humidity</span><strong id="statAvgHum">-- %</strong></div>
+        <div class="slh-stat-box"><span>Max Humidity</span><strong id="statMaxHum">-- %</strong></div>
+    </div>
+
     <div class="slh-graph-wrap">
         <div id="graphContainer" style="height: 340px; width: 100%;">
             <div style="height: 100%; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 0.9rem;">
                 Upload a CSV file, connect a DataLogger device, or click "Load Sample Demo Data" to inspect temperature &amp; humidity telemetry.
             </div>
+        </div>
+    </div>
+</section>
+
+<!-- Multi-Chart Engineering Analytics Row -->
+<section class="slh-analytics-grid">
+    <div class="slh-card">
+        <div class="slh-card-header">
+            <div class="slh-card-title">
+                <i class="fa-solid fa-chart-column" style="color: #2563eb;"></i>
+                <span>Temperature Distribution</span>
+            </div>
+        </div>
+        <div class="slh-mini-chart-wrap">
+            <canvas id="tempHistogramChart"></canvas>
+        </div>
+    </div>
+
+    <div class="slh-card">
+        <div class="slh-card-header">
+            <div class="slh-card-title">
+                <i class="fa-solid fa-braille" style="color: #0891b2;"></i>
+                <span>Temp vs. Humidity Correlation</span>
+            </div>
+        </div>
+        <div class="slh-mini-chart-wrap">
+            <canvas id="tempHumScatterChart"></canvas>
+        </div>
+    </div>
+
+    <div class="slh-card">
+        <div class="slh-card-header">
+            <div class="slh-card-title">
+                <i class="fa-solid fa-chart-pie" style="color: #16a34a;"></i>
+                <span>Health &amp; Anomaly Breakdown</span>
+            </div>
+        </div>
+        <div class="slh-mini-chart-wrap">
+            <canvas id="anomalyDoughnutChart"></canvas>
         </div>
     </div>
 </section>

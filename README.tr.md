@@ -40,9 +40,13 @@ Staj dönemindeki bir prototip olarak başlayan proje; kapsamlı güvenlik denet
 
 ## 2. Temel Özellikler
 
-- **Etkileşimli Telemetri Grafiği:** Yüksek performanslı **uPlot** kütüphanesi ile sıcaklık (°C) ve nem (%) zaman serisi çizimi ve özel imleç ipuçları.
+- **Çoklu Grafikli Telemetri Analiz Paneli:**
+  - **Zaman Serisi Telemetri Grafiği (uPlot):** Canlı **Min / Ort / Maks** istatistik şeridi ile birlikte sıcaklık (°C) ve nem (%) zaman serisi grafiği.
+  - **Sıcaklık Dağılım Histogramı (Chart.js):** Ölçümlerin sıcaklık aralıklarına (`<20°C`, `20–22°C`, `22–24°C`, `24–26°C`, `>26°C`) göre frekans dağılımı.
+  - **Sıcaklık–Nem Korelasyon Grafiği (Chart.js Scatter):** Normal ölçümleri mavi, anomali noktalarını kırmızı olarak gösteren dağılım grafiği.
+  - **Sağlık & Anomali Pasta Grafiği (Chart.js Doughnut):** Normal, Sıcaklık Anomalisi, Nem Anomalisi ve Çift Sıçrama oranlarının özeti.
 - **Otomatik Anomali Tespiti:** Ani değişim sıçramalarını ve eşik dışı sıcaklık/nem değerlerini işaretler; **Anomalies Only** sekmesi ile hatalı ölçümleri filtreler.
-- **6 Adımlı Cihaz Konfigürasyon Sihirbazı:** Cihaz Açıklaması (`WLG`/`WLW`), Gecikmeli Başlatma (`WLS0`), RTC Saat Kalibrasyonu (`WLH0`/`WLH1`), Bellek Biçimlendirme (`WLE1`), Alarm Eşikleri (`WLM`) ve Örnekleme Aralığı / Otomatik Başlatma (`WLA`/`WLV1`).
+- **Adım Adım 6 Aşamalı Cihaz Konfigürasyon Sihirbazı:** Sol menüden tek girişli sıralı akış (rastgele yan menü seçimi engelli); **Önceki**, **Adımı Atla (Skip Step)**, **Kaydet ve İlerle**, görsel adım çubuğu (Tamamlandı / Atlandı / Aktif) ve özet ekranı ile Cihaz Açıklaması (`WLG`/`WLW`), Gecikmeli Başlatma (`WLS0`), RTC Saat Kalibrasyonu (`WLH0`/`WLH1`), Bellek Biçimlendirme (`WLE1`), Alarm Eşikleri (`WLM`) ve Örnekleme Aralığı / Otomatik Başlatma (`WLA`/`WLV1`) yönetimi.
 - **WMI Destekli COM Port Köprüsü:** Windows COM portlarını donanım açıklamalarıyla (`Win32_SerialPort`) listeler ve `WLB` veri akışını SignalR üzerinden web arayüzüne aktarır.
 - **Tarayıcı IndexedDB Geçmişi ve Excel Dışa Aktarma:** Yüklenen CSV dosyalarını ve cihaz dökümlerini tarayıcıda saklar; ExcelJS ile `.xlsx` formatında dışa aktarır.
 - **İzole Demo ve Simülasyon Modu:** Hem yerel Masaüstü Sanal COM Port (`COM99`) hem de bulut ortamı için opsiyonel `CloudDemoResponderService` desteği sunar.
@@ -77,7 +81,7 @@ Ayrıntılı akış diyagramları için [docs/architecture/ARCHITECTURE.md](docs
 | Katman | Teknolojiler |
 | :--- | :--- |
 | **Backend API** | C#, .NET 8, ASP.NET Core Web API, EF Core 8, SQLite, Swagger/OpenAPI, Dahili Rate Limiter |
-| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, IndexedDB, ExcelJS, FileSaver.js, Toastr |
+| **Web Dashboard** | ASP.NET Core 8 MVC, SignalR, Cookie Auth, uPlot, Chart.js 4, IndexedDB, ExcelJS, FileSaver.js, Toastr |
 | **Masaüstü COM Köprüsü** | .NET 8 Windows Forms (`net8.0-windows`), `System.IO.Ports`, `System.Management` (WMI) |
 | **Test ve Dağıtım** | xUnit, Docker, Docker Compose, Render Blueprint (`deployment/render.yaml`) |
 
@@ -93,17 +97,17 @@ Ayrıntılı akış diyagramları için [docs/architecture/ARCHITECTURE.md](docs
 
 ## 6. Ekran Görüntüleri
 
-| Giriş Ekranı (Demo Yardımcılı) | Telemetri Dashboard & uPlot Grafiği |
+| Giriş Ekranı (Demo Yardımcılı) | Telemetri Dashboard, İstatistikler & uPlot |
 | :---: | :---: |
 | ![Giriş Ekranı](docs/screenshots/01-login.png) | ![Telemetri Dashboard](docs/screenshots/02-dashboard-telemetry.png) |
 
-| Anomali Tablosu & Bağlı Seri Port Terminali | Cihaz Açıklama Ayarı (`WLG`/`WLW`) |
+| Çoklu Grafik Analizi (Histogram & Korelasyon) | Anomali Tablosu & Bağlı Seri Port Terminali |
 | :---: | :---: |
-| ![Anomali ve Seri Port](docs/screenshots/03-anomalies-and-serial.png) | ![Cihaz Konfigürasyonu](docs/screenshots/04-device-configuration.png) |
+| ![Çoklu Grafik Analizi](docs/screenshots/03-multi-chart-analytics.png) | ![Anomali ve Seri Port](docs/screenshots/04-anomalies-and-serial.png) |
 
-| Alarm Eşik Ayarları (`WLM`) |
+| Adım Adım 6 Aşamalı Cihaz Konfigürasyon Sihirbazı (Atlama Destekli) |
 | :---: |
-| ![Alarm Eşikleri](docs/screenshots/05-alarm-thresholds.png) |
+| ![Cihaz Konfigürasyon Sihirbazı](docs/screenshots/05-configuration-wizard.png) |
 
 ---
 

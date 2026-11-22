@@ -39,30 +39,10 @@
                     <span>CSV / Excel Export</span>
                 </a>
 
-                <div class="slh-nav-section">Device Configuration</div>
-                <a href="/Settings/AddComm" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "AddComm" ? "active" : "")">
-                    <i class="fa-solid fa-comment-dots"></i>
-                    <span>Device Description</span>
-                </a>
-                <a href="/Settings/DelayStart" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "DelayStart" ? "active" : "")">
-                    <i class="fa-solid fa-hourglass-start"></i>
-                    <span>Delayed Start</span>
-                </a>
-                <a href="/Settings/Calibration" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "Calibration" ? "active" : "")">
-                    <i class="fa-solid fa-clock"></i>
-                    <span>Clock Calibration</span>
-                </a>
-                <a href="/Settings/Formatting" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "Formatting" ? "active" : "")">
-                    <i class="fa-solid fa-eraser"></i>
-                    <span>Format Memory</span>
-                </a>
-                <a href="/Settings/TempHum" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "TempHum" ? "active" : "")">
-                    <i class="fa-solid fa-temperature-half"></i>
-                    <span>Alarm Thresholds</span>
-                </a>
-                <a href="/Settings/Time" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["action"]?.ToString() == "Time" ? "active" : "")">
-                    <i class="fa-solid fa-stopwatch"></i>
-                    <span>Logging Interval</span>
+                <div class="slh-nav-section">Device Management</div>
+                <a href="/Settings" class="slh-nav-item slh-device-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Settings" ? "active" : "")">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>Configuration Wizard</span>
                 </a>
 
                 <div class="slh-nav-section">Account</div>
@@ -135,6 +115,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="~/js/app.js" asp-append-version="true"></script>
